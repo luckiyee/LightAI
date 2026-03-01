@@ -13,13 +13,20 @@
     <link rel="stylesheet" href="./styles/main.css" />
   </head>
   <body class="settings-page">
+    <div class="ambient-dots" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
     <div id="toastRoot" class="toast-root"></div>
 
     <header class="top-nav glass">
-      <a class="logo" href="./index.html">LightAI</a>
+      <a class="logo brand-lockup" href="./index.html">
+        <img src="./app%20icon.png" alt="LightAI icon" class="logo-icon" />
+        <span>LightAI</span>
+      </a>
       <nav class="top-links">
         <a href="./index.html">Home</a>
         <a href="./chat.html">Chat</a>
+        <a href="./pricing.html">Pricing</a>
         <a class="active" href="./settings.html">Settings</a>
       </nav>
       <span id="settingsStatus" class="status-pill">Loading...</span>
@@ -50,28 +57,43 @@
       </section>
 
       <section class="settings-card">
-        <h2>AI Preferences</h2>
+        <h2>AI Runtime Policy</h2>
         <div class="prefs-grid">
-          <label>
-            <span>Select Model</span>
-            <select id="modelSelect"></select>
-          </label>
-          <label>
-            <span>Temperature <strong id="temperatureValue">0.7</strong></span>
-            <input id="temperatureRange" type="range" min="0" max="2" step="0.1" value="0.7" />
-          </label>
-          <label>
+          <div class="readonly-row">
+            <span>Model</span>
+            <strong>Light</strong>
+          </div>
+          <div class="readonly-row">
+            <span>Editions</span>
+            <strong>Flash (fast) / Light (deep)</strong>
+          </div>
+          <div class="readonly-row">
+            <span>Temperature</span>
+            <strong>Edition-locked (not user-editable)</strong>
+          </div>
+          <div class="readonly-row">
             <span>Max Tokens</span>
-            <input id="maxTokensInput" type="number" min="64" max="8192" step="64" value="1024" />
-          </label>
-          <label>
-            <span>System Prompt Base</span>
-            <textarea id="basePromptInput" rows="6" maxlength="5000"></textarea>
-          </label>
+            <strong>Edition-locked (not user-editable)</strong>
+          </div>
+          <div class="readonly-note">
+            Base prompt cannot be edited in Settings.  
+            To change it, open Chat and enter the password, then send the next message as the new prompt.
+          </div>
         </div>
-        <button id="saveSettingsBtn" class="btn btn-primary" disabled>Save Preferences</button>
       </section>
     </main>
+
+    <footer class="page-footer">
+      <div class="footer-brand brand-lockup">
+        <img src="./app%20icon.png" alt="" class="logo-icon" />
+        <span>LightAI</span>
+      </div>
+      <div class="footer-links">
+        <a href="./privacy.html">Privacy Policy</a>
+        <a href="./tos.html">Terms of Service</a>
+        <a href="./pricing.html">Pricing</a>
+      </div>
+    </footer>
 
     <script type="module" src="./scripts/settings.js"></script>
   </body>

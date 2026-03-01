@@ -1,6 +1,6 @@
 # LightAI
 
-LightAI is a stylish AI chat website using HTML/CSS/JS with a local Node proxy for Ollama.
+LightAI is a stylish AI chat website using HTML/CSS/JS with a Node runtime that connects to Ollama.
 
 The assistant identity is:
 - Name: `Light`
@@ -11,13 +11,15 @@ The assistant identity is:
 - Bright yellow/white/gray responsive UI
 - Streaming chat responses
 - Cancel and retry generation
-- Model picker, temperature, and max token controls
+- Light model editions (`Flash` and `Light`) in-chat selector
+- File/image upload support in chat composer
+- Optional web search with source indicators
 - Account creation and login (`username` + `password`)
 - Cookie-based session so you stay logged in
 - Per-account saved conversations with delete support
 - Local settings persistence (`localStorage`)
 - Password-gated runtime base prompt update
-- Health status for proxy and Ollama
+- Uses the official `ollama` npm client for chat/runtime access
 - Basic rate-limiting and request validation in proxy
 
 ## Password Prompt Switch
@@ -41,11 +43,7 @@ Start.bat
 
 `Start.bat` will:
 - verify/install Node.js (via `winget` if missing)
-- verify/install Ollama (via `winget` if missing)
 - install npm dependencies if needed
-- start Ollama service
-- pull `llama3.1:8b`
-- create the custom `Light` model from `Modelfile.light`
 - create `.env` from `.env.example` (if missing)
 - start the server and open `http://localhost:3000`
 
@@ -54,10 +52,18 @@ Start.bat
 ```bat
 npm install
 copy .env.example .env
-ollama serve
-ollama pull llama3.1:8b
-ollama create Light -f Modelfile.light
 npm start
+```
+
+## Runtime Provider
+
+The app uses Ollama via the `ollama` npm client. You can point it to either:
+- a local Ollama server (`http://127.0.0.1:11434`)
+- Ollama Cloud (`https://ollama.com`) with an API key
+
+```env
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_API_KEY=
 ```
 
 ## API Endpoints

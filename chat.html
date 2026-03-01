@@ -13,12 +13,18 @@
     <link rel="stylesheet" href="./styles/main.css" />
   </head>
   <body class="chat-page">
+    <div class="ambient-dots" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
     <div id="toastRoot" class="toast-root"></div>
 
     <div class="chat-layout">
       <aside class="chat-sidebar">
         <div class="sidebar-top">
-          <a class="logo" href="./index.html">LightAI</a>
+          <a class="logo brand-lockup" href="./index.html">
+            <img src="./app%20icon.png" alt="LightAI icon" class="logo-icon" />
+            <span>LightAI</span>
+          </a>
           <button id="newChatBtn" class="btn btn-outline full">+ New Chat</button>
         </div>
 
@@ -42,6 +48,8 @@
             <button id="logoutBtn" class="btn btn-outline full" type="button">Logout</button>
           </div>
         </div>
+
+        <div class="sponsored-box">SPONSORED ADVERTISEMENT</div>
       </aside>
 
       <section class="chat-main">
@@ -50,19 +58,9 @@
             <h2 id="chatTitle">Light Chat</h2>
             <p id="statusPill" class="status-inline">Checking connection...</p>
           </div>
-          <div class="model-controls">
-            <label class="control">
-              <span>Model</span>
-              <select id="modelSelect"></select>
-            </label>
-            <label class="control small">
-              <span>Temp</span>
-              <input id="temperatureRange" type="number" min="0" max="2" step="0.1" value="0.7" />
-            </label>
-            <label class="control small">
-              <span>Max</span>
-              <input id="maxTokensInput" type="number" min="64" max="8192" step="64" value="1024" />
-            </label>
+          <div class="model-controls readonly-controls">
+            <span class="readonly-chip">Model: <strong id="modelBadge">Light</strong></span>
+            <span class="readonly-chip" id="runtimeHint">Fast mode</span>
           </div>
         </header>
 
@@ -78,18 +76,43 @@
               required
             ></textarea>
             <div class="composer-row">
-              <span id="charCount" class="hint">0 / 4000</span>
+              <div class="composer-left">
+                <div class="quick-actions">
+                  <button id="quickActionsBtn" class="quick-plus-btn" type="button" aria-label="More actions">
+                    +
+                  </button>
+                  <div id="quickActionsMenu" class="quick-actions-menu" hidden>
+                    <button id="uploadFileBtn" class="quick-action-item" type="button">Upload file</button>
+                    <button id="uploadImageBtn" class="quick-action-item" type="button">Upload image</button>
+                    <button id="toggleWebSearchBtn" class="quick-action-item" type="button">Web search: Off</button>
+                  </div>
+                </div>
+                <label class="edition-dropdown-wrap chatbox-edition" for="editionSelect">
+                  <select id="editionSelect" class="edition-dropdown" aria-label="Choose Light edition">
+                    <option value="flash">Flash</option>
+                    <option value="light">Light</option>
+                  </select>
+                </label>
+                <span id="charCount" class="hint" hidden>0 / 4000</span>
+              </div>
               <div class="composer-buttons">
-                <button id="clearChatBtn" class="btn btn-ghost" type="button">Clear</button>
                 <button id="sendBtn" class="btn btn-primary icon-btn" type="submit" aria-label="Send">
-                  <span id="sendBtnLabel">Send</span>
+                  <span id="sendBtnLabel" aria-hidden="true">➤</span>
                 </button>
                 <button id="cancelBtn" class="btn btn-danger icon-btn" type="button" hidden>
                   Cancel
                 </button>
               </div>
             </div>
+            <div id="attachmentList" class="attachment-list"></div>
+            <input id="fileInput" type="file" multiple hidden />
+            <input id="imageInput" type="file" accept="image/*" multiple hidden />
           </form>
+          <div class="mini-footer-links">
+            <a href="./tos.html">Terms of Service</a>
+            <a href="./privacy.html">Privacy Policy</a>
+            <a href="./pricing.html">Pricing</a>
+          </div>
         </footer>
       </section>
     </div>
@@ -101,6 +124,7 @@
           <div class="msg-body">
             <p class="msg-content"></p>
             <div class="msg-actions">
+              <button class="mini-action source-btn" type="button" hidden>🌐 0</button>
               <button class="mini-action copy-btn" type="button">Copy</button>
               <button class="mini-action retry-btn" type="button">Retry</button>
             </div>

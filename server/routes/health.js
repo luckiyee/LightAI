@@ -1,14 +1,14 @@
 import { Router } from "express";
-import { checkOllamaHealth, getOllamaBaseUrl } from "../ollamaClient.js";
+import { getRuntimeHealth } from "../lightRuntime.js";
 
 const router = Router();
 
 router.get("/", async (_req, res) => {
-  const ollamaReachable = await checkOllamaHealth();
+  const runtime = await getRuntimeHealth();
   res.json({
     proxy: true,
-    ollamaReachable,
-    ollamaBaseUrl: getOllamaBaseUrl()
+    runtimeProvider: runtime.provider,
+    runtimeReachable: runtime.reachable
   });
 });
 

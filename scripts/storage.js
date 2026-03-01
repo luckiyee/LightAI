@@ -1,4 +1,5 @@
 const KEYS = {
+  selectedEdition: "lightai.selectedEdition",
   selectedModel: "lightai.selectedModel",
   temperature: "lightai.temperature",
   maxTokens: "lightai.maxTokens",
@@ -6,6 +7,7 @@ const KEYS = {
 };
 
 const DEFAULTS = {
+  selectedEdition: "flash",
   selectedModel: "Light",
   temperature: 0.7,
   maxTokens: 1024,
@@ -21,6 +23,15 @@ function readNumber(key, fallback) {
 }
 
 export const storage = {
+  getSelectedEdition() {
+    const value = (localStorage.getItem(KEYS.selectedEdition) || DEFAULTS.selectedEdition).toLowerCase();
+    return value === "light" ? "light" : "flash";
+  },
+  setSelectedEdition(value) {
+    const safe = String(value || DEFAULTS.selectedEdition).toLowerCase() === "light" ? "light" : "flash";
+    localStorage.setItem(KEYS.selectedEdition, safe);
+  },
+
   getSelectedModel() {
     return localStorage.getItem(KEYS.selectedModel) || DEFAULTS.selectedModel;
   },
@@ -53,6 +64,7 @@ export const storage = {
 
   getAllPreferences() {
     return {
+      selectedEdition: this.getSelectedEdition(),
       selectedModel: this.getSelectedModel(),
       temperature: this.getTemperature(),
       maxTokens: this.getMaxTokens(),
@@ -60,6 +72,7 @@ export const storage = {
     };
   },
   setAllPreferences(prefs) {
+    this.setSelectedEdition(prefs.selectedEdition);
     this.setSelectedModel(prefs.selectedModel);
     this.setTemperature(prefs.temperature);
     this.setMaxTokens(prefs.maxTokens);

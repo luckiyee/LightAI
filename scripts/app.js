@@ -1,8 +1,27 @@
 import { api, streamChat } from "./api.js";
-import { storage, DEFAULTS } from "./storage.js";
+import { storage } from "./storage.js";
 
 const ADMIN_PASSWORD = "Kli-T10-Pmo";
 const GUEST_MAX_MESSAGES = 5;
+
+const EDITIONS = {
+  flash: {
+    id: "flash",
+    label: "Flash",
+    model: "Light-Flash",
+    temperature: 0.5,
+    maxTokens: 512,
+    hint: "Fast mode"
+  },
+  light: {
+    id: "light",
+    label: "Light",
+    model: "Light",
+    temperature: 0.7,
+    maxTokens: 1024,
+    hint: "Deep mode"
+  }
+};
 
 const dom = {
   toastRoot: document.getElementById("toastRoot"),
@@ -18,14 +37,21 @@ const dom = {
   registerBtn: document.getElementById("registerBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
   newChatBtn: document.getElementById("newChatBtn"),
-  clearChatBtn: document.getElementById("clearChatBtn"),
-  modelSelect: document.getElementById("modelSelect"),
-  temperatureRange: document.getElementById("temperatureRange"),
-  maxTokensInput: document.getElementById("maxTokensInput"),
+  modelBadge: document.getElementById("modelBadge"),
+  editionSelect: document.getElementById("editionSelect"),
+  runtimeHint: document.getElementById("runtimeHint"),
   chatMessages: document.getElementById("chatMessages"),
   chatForm: document.getElementById("chatForm"),
   promptInput: document.getElementById("promptInput"),
   charCount: document.getElementById("charCount"),
+  quickActionsBtn: document.getElementById("quickActionsBtn"),
+  quickActionsMenu: document.getElementById("quickActionsMenu"),
+  uploadFileBtn: document.getElementById("uploadFileBtn"),
+  uploadImageBtn: document.getElementById("uploadImageBtn"),
+  toggleWebSearchBtn: document.getElementById("toggleWebSearchBtn"),
+  attachmentList: document.getElementById("attachmentList"),
+  fileInput: document.getElementById("fileInput"),
+  imageInput: document.getElementById("imageInput"),
   sendBtn: document.getElementById("sendBtn"),
   sendBtnLabel: document.getElementById("sendBtnLabel"),
   cancelBtn: document.getElementById("cancelBtn"),
@@ -43,7 +69,9 @@ const state = {
   streaming: false,
   awaitingPromptOverride: false,
   abortController: null,
-  stickToBottom: true
+  stickToBottom: true,
+  enableWebSearch: false,
+  pendingAttachments: []
 };
 
 function showToast(message, kind = "success", timeoutMs = 2600) {
@@ -60,13 +88,15 @@ function setStatus(text, kind = "neutral") {
 }
 
 function updateComposerState() {
-  const hasModel = Boolean(dom.modelSelect.value || state.settings.selectedModel);
+  const hasModel = Boolean(state.settings.selectedModel);
   dom.promptInput.disabled = !hasModel || state.streaming;
   dom.sendBtn.hidden = state.streaming;
   dom.cancelBtn.hidden = !state.streaming;
   dom.sendBtn.disabled = !hasModel || state.streaming;
   dom.newChatBtn.disabled = state.streaming;
-  dom.clearChatBtn.disabled = state.streaming;
+  if (dom.editionSelect) dom.editionSelect.disabled = state.streaming;
+  if (dom.quickActionsBtn) dom.quickActionsBtn.disabled = state.streaming;
+  if (state.streaming && dom.quickActionsMenu) dom.quickActionsMenu.hidden = true;
 }
 
 function updateAuthState() {
@@ -80,7 +110,9 @@ function updateAuthState() {
 }
 
 function updateCharCount() {
-  dom.charCount.textContent = `${dom.promptInput.value.length} / 4000`;
+  const count = dom.promptInput.value.length;
+  dom.charCount.textContent = `${count} / 4000`;
+  dom.charCount.hidden = count <= 3500;
 }
 
 function autosizePrompt() {
@@ -107,6 +139,7 @@ function makeMessageNode(role, content, options = {}) {
   const avatar = fragment.querySelector(".msg-avatar");
   const body = fragment.querySelector(".msg-body");
   const contentEl = fragment.querySelector(".msg-content");
+  const sourceBtn = fragment.querySelector(".source-btn");
   const copyBtn = fragment.querySelector(".copy-btn");
   const retryBtn = fragment.querySelector(".retry-btn");
 
@@ -116,16 +149,33 @@ function makeMessageNode(role, content, options = {}) {
   if (role === "system") {
     avatar.remove();
     body.style.maxWidth = "100%";
+    sourceBtn.remove();
     copyBtn.remove();
     retryBtn.remove();
   }
 
   if (role === "user") {
+    sourceBtn.remove();
     copyBtn.remove();
     retryBtn.remove();
   }
 
   if (role === "ai") {
+    const sources = Array.isArray(options.sources) ? options.sources : [];
+    if (sources.length > 0) {
+      article.classList.add("has-sources");
+      sourceBtn.hidden = false;
+      sourceBtn.textContent = `🌐 ${sources.length}`;
+      sourceBtn.title = "Show web sources";
+      sourceBtn.addEventListener("click", () => {
+        const formatted = sources
+          .map((source, index) => `${index + 1}. ${source.title}\n${source.url || ""}`.trim())
+          .join("\n\n");
+        showToast(`Sources available:\n${formatted}`, "success", 5200);
+      });
+    } else {
+      sourceBtn.remove();
+    }
     copyBtn.addEventListener("click", async () => {
       await navigator.clipboard.writeText(contentEl.textContent || "");
       showToast("Copied to clipboard.");
@@ -149,7 +199,7 @@ function renderMessages() {
     const { article } = makeMessageNode(
       "system",
       state.user
-        ? "Start a new conversation with Light."
+        ? "Start a new conversation with Light. Use + to upload files/images or enable web search."
         : `Guest mode enabled. You can send up to ${GUEST_MAX_MESSAGES} messages before login.`
     );
     dom.chatMessages.appendChild(article);
@@ -159,7 +209,7 @@ function renderMessages() {
 
   for (const message of state.messages) {
     const role = message.role === "assistant" ? "ai" : message.role;
-    const { article } = makeMessageNode(role, message.content);
+    const { article } = makeMessageNode(role, message.content, { sources: message.sources || [] });
     dom.chatMessages.appendChild(article);
   }
   maybeScrollToBottom(true);
@@ -208,16 +258,128 @@ function renderConversations() {
   }
 }
 
-function applySettingsToUi() {
-  dom.temperatureRange.value = String(state.settings.temperature);
-  dom.maxTokensInput.value = String(state.settings.maxTokens);
+function applyLockedRuntimeSettings() {
+  const edition = state.settings.selectedEdition === "light" ? "light" : "flash";
+  const config = EDITIONS[edition];
+  state.settings.selectedEdition = config.id;
+  state.settings.selectedModel = config.model;
+  state.settings.temperature = config.temperature;
+  state.settings.maxTokens = config.maxTokens;
+  storage.setSelectedEdition(config.id);
+  storage.setSelectedModel(config.model);
+  storage.setTemperature(config.temperature);
+  storage.setMaxTokens(config.maxTokens);
 }
 
-function persistSettingsFromUi() {
-  state.settings.temperature = Number(dom.temperatureRange.value) || DEFAULTS.temperature;
-  state.settings.maxTokens = Number(dom.maxTokensInput.value) || DEFAULTS.maxTokens;
-  state.settings.selectedModel = dom.modelSelect.value || state.settings.selectedModel;
-  storage.setAllPreferences(state.settings);
+function applyEditionUi() {
+  const edition = state.settings.selectedEdition === "light" ? "light" : "flash";
+  if (dom.editionSelect) dom.editionSelect.value = edition;
+  if (dom.modelBadge) dom.modelBadge.textContent = "Light";
+  if (dom.runtimeHint) dom.runtimeHint.textContent = EDITIONS[edition].hint;
+}
+
+function setEdition(editionId) {
+  if (state.streaming) return;
+  const safe = editionId === "light" ? "light" : "flash";
+  if (state.settings.selectedEdition === safe) return;
+  state.settings.selectedEdition = safe;
+  applyLockedRuntimeSettings();
+  applyEditionUi();
+  showToast(`Edition switched to ${EDITIONS[safe].label}.`);
+}
+
+function updateWebSearchUi() {
+  if (!dom.toggleWebSearchBtn) return;
+  dom.toggleWebSearchBtn.textContent = `Web search: ${state.enableWebSearch ? "On" : "Off"}`;
+}
+
+function renderPendingAttachments() {
+  if (!dom.attachmentList) return;
+  dom.attachmentList.innerHTML = "";
+  for (const item of state.pendingAttachments) {
+    const chip = document.createElement("span");
+    chip.className = "attachment-chip";
+
+    const label = document.createElement("span");
+    label.textContent = item.kind === "image" ? `🖼 ${item.name}` : `📎 ${item.name}`;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.setAttribute("aria-label", `Remove ${item.name}`);
+    removeBtn.textContent = "×";
+    removeBtn.addEventListener("click", () => {
+      state.pendingAttachments = state.pendingAttachments.filter((entry) => entry.id !== item.id);
+      renderPendingAttachments();
+    });
+
+    chip.append(label, removeBtn);
+    dom.attachmentList.appendChild(chip);
+  }
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error(`Failed to read ${file.name}.`));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error(`Failed to read ${file.name}.`));
+    reader.readAsText(file);
+  });
+}
+
+async function fileToAttachment(file, kind) {
+  const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+  const MAX_TEXT_BYTES = 300 * 1024;
+  if (kind === "image") {
+    if (file.size > MAX_IMAGE_BYTES) {
+      throw new Error(`${file.name} is too large. Max image size is 2MB.`);
+    }
+    const dataUrl = await readFileAsDataUrl(file);
+    return {
+      id: crypto.randomUUID(),
+      kind: "image",
+      name: file.name,
+      mimeType: file.type || "image/*",
+      content: dataUrl
+    };
+  }
+
+  if (file.size > MAX_TEXT_BYTES) {
+    throw new Error(`${file.name} is too large. Max file size is 300KB.`);
+  }
+  const text = await readFileAsText(file);
+  return {
+    id: crypto.randomUUID(),
+    kind: "file",
+    name: file.name,
+    mimeType: file.type || "text/plain",
+    content: text.slice(0, 5000)
+  };
+}
+
+async function handlePickedFiles(fileList, kind) {
+  const files = Array.from(fileList || []);
+  if (files.length === 0) return;
+  for (const file of files.slice(0, 8)) {
+    try {
+      const attachment = await fileToAttachment(file, kind);
+      state.pendingAttachments.push(attachment);
+    } catch (error) {
+      showToast(error.message, "error", 3800);
+    }
+  }
+  if (state.pendingAttachments.length > 8) {
+    state.pendingAttachments = state.pendingAttachments.slice(-8);
+  }
+  renderPendingAttachments();
 }
 
 async function loadModels() {
@@ -225,32 +387,31 @@ async function loadModels() {
     const result = await api.getModels();
     const models = Array.isArray(result.models) ? result.models : [];
     state.models = models;
-    dom.modelSelect.innerHTML = "";
 
     if (!models.length) {
-      const option = document.createElement("option");
-      option.value = "";
-      option.textContent = "No models found";
-      dom.modelSelect.appendChild(option);
-      dom.modelSelect.disabled = true;
+      if (dom.modelBadge) dom.modelBadge.textContent = "Unavailable";
       return;
     }
 
-    for (const model of models) {
-      const option = document.createElement("option");
-      option.value = model;
-      option.textContent = model;
-      dom.modelSelect.appendChild(option);
+    const hasLight = models.includes(EDITIONS.light.model);
+    const hasFlash = models.includes(EDITIONS.flash.model);
+    if (!hasLight || !hasFlash) {
+      showToast(
+        "Some editions are unavailable. Embedded fallback remains active.",
+        "error",
+        5000
+      );
     }
 
-    const preferred = models.includes(state.settings.selectedModel)
-      ? state.settings.selectedModel
-      : models.includes("Light")
-        ? "Light"
-        : models[0];
-    state.settings.selectedModel = preferred;
-    dom.modelSelect.value = preferred;
-    persistSettingsFromUi();
+    const desiredEdition = state.settings.selectedEdition === "light" ? "light" : "flash";
+    const desiredModel = EDITIONS[desiredEdition].model;
+    if (!models.includes(desiredModel)) {
+      const fallbackEdition = models.includes(EDITIONS.flash.model) ? "flash" : "light";
+      state.settings.selectedEdition = fallbackEdition;
+      showToast(`Switched to available edition: ${EDITIONS[fallbackEdition].label}.`, "error");
+    }
+    applyLockedRuntimeSettings();
+    applyEditionUi();
   } catch (error) {
     showToast(`Model load failed: ${error.message}`, "error");
   }
@@ -259,10 +420,11 @@ async function loadModels() {
 async function checkHealth() {
   try {
     const health = await api.getHealth();
-    if (health.ollamaReachable) {
-      setStatus("Online", "ok");
+    if (health.runtimeReachable) {
+      const label = health.runtimeProvider === "ollama" ? "Online (Ollama)" : "Online (Embedded)";
+      setStatus(label, "ok");
     } else {
-      setStatus("Ollama unreachable", "error");
+      setStatus("Runtime unreachable", "error");
     }
   } catch (error) {
     setStatus(`Offline: ${error.message}`, "error");
@@ -385,8 +547,8 @@ async function handleLogout() {
   }
 }
 
-function appendMessageToState(role, content) {
-  state.messages.push({ role, content });
+function appendMessageToState(role, content, extras = {}) {
+  state.messages.push({ role, content, ...extras });
   renderMessages();
 }
 
@@ -402,8 +564,11 @@ async function sendMessage(event) {
   event.preventDefault();
   if (state.streaming) return;
 
-  const content = dom.promptInput.value.trim();
-  if (!content) return;
+  let content = dom.promptInput.value.trim();
+  if (!content && state.pendingAttachments.length === 0) return;
+  if (!content && state.pendingAttachments.length > 0) {
+    content = "Please use the attached files/images to help answer.";
+  }
 
   if (!state.user && getGuestMessageCount() >= GUEST_MAX_MESSAGES) {
     showToast(`Guest limit reached (${GUEST_MAX_MESSAGES}). Login to continue.`, "error", 4200);
@@ -413,7 +578,7 @@ async function sendMessage(event) {
     return;
   }
 
-  if (content === ADMIN_PASSWORD) {
+  if (content === ADMIN_PASSWORD && state.pendingAttachments.length === 0) {
     state.awaitingPromptOverride = true;
     dom.promptInput.value = "";
     updateCharCount();
@@ -433,10 +598,23 @@ async function sendMessage(event) {
     return;
   }
 
+  const outboundAttachments = state.pendingAttachments.map((entry) => ({
+    kind: entry.kind,
+    name: entry.name,
+    mimeType: entry.mimeType,
+    content: entry.content
+  }));
+  const attachmentNames = outboundAttachments.map((entry) => entry.name);
+  const userMessageForUi = attachmentNames.length
+    ? `${content}\n\n[Attachments: ${attachmentNames.join(", ")}]`
+    : content;
+
   state.lastUserMessage = content;
-  appendMessageToState("user", content);
+  appendMessageToState("user", userMessageForUi);
 
   dom.promptInput.value = "";
+  state.pendingAttachments = [];
+  renderPendingAttachments();
   updateCharCount();
   autosizePrompt();
 
@@ -449,6 +627,7 @@ async function sendMessage(event) {
   updateComposerState();
 
   let assistantText = "";
+  let assistantSources = [];
   let activeModel = state.settings.selectedModel;
   try {
     const payloadMessages = [
@@ -464,8 +643,13 @@ async function sendMessage(event) {
         messages: payloadMessages,
         temperature: Number(state.settings.temperature),
         maxTokens: tokenLimit,
+        enableWebSearch: state.enableWebSearch,
+        attachments: outboundAttachments,
         signal: state.abortController.signal
       })) {
+        if (chunk.type === "sources") {
+          assistantSources = Array.isArray(chunk.sources) ? chunk.sources : [];
+        }
         if (chunk.type === "token") {
           assistantText += chunk.content;
           contentEl.textContent = assistantText;
@@ -479,11 +663,10 @@ async function sendMessage(event) {
     } catch (primaryError) {
       const message = String(primaryError?.message || "");
       const looksLikeRuntimeCrash = /exit status 2|runner process|signal|out of memory/i.test(message);
-      const fallbackModel = state.models.includes("llama3.1:8b")
-        ? "llama3.1:8b"
-        : state.models.find(Boolean);
+      const oppositeEdition = state.settings.selectedEdition === "light" ? "flash" : "light";
+      const fallbackModel = EDITIONS[oppositeEdition].model;
 
-      if (!looksLikeRuntimeCrash || !fallbackModel || fallbackModel === activeModel) {
+      if (!looksLikeRuntimeCrash || !state.models.includes(fallbackModel) || fallbackModel === activeModel) {
         throw primaryError;
       }
 
@@ -491,11 +674,11 @@ async function sendMessage(event) {
       assistantText = "";
       contentEl.textContent = "";
       activeModel = fallbackModel;
-      await runStream(fallbackModel, Math.min(Number(state.settings.maxTokens) || 256, 256));
-      state.settings.selectedModel = fallbackModel;
-      dom.modelSelect.value = fallbackModel;
-      persistSettingsFromUi();
-      appendSystemMessage(`Switched model to ${fallbackModel} after runtime failure.`);
+      await runStream(fallbackModel, EDITIONS[oppositeEdition].maxTokens);
+      state.settings.selectedEdition = oppositeEdition;
+      applyLockedRuntimeSettings();
+      applyEditionUi();
+      appendSystemMessage(`Switched edition to ${EDITIONS[oppositeEdition].label} after runtime failure.`);
     }
   } catch (error) {
     if (error.name === "AbortError") {
@@ -513,7 +696,7 @@ async function sendMessage(event) {
 
   article.remove();
   if (assistantText) {
-    appendMessageToState("assistant", assistantText);
+    appendMessageToState("assistant", assistantText, { sources: assistantSources });
     await persistConversation();
   }
 }
@@ -544,28 +727,58 @@ function bindEvents() {
     renderMessages();
     renderConversations();
   });
-  dom.clearChatBtn.addEventListener("click", () => {
-    state.messages = [];
-    renderMessages();
-  });
 
   dom.loginBtn.addEventListener("click", () => void handleLogin());
   dom.registerBtn.addEventListener("click", () => void handleRegister());
   dom.logoutBtn.addEventListener("click", () => void handleLogout());
+  dom.editionSelect?.addEventListener("change", (event) => {
+    const target = event.target;
+    setEdition(target?.value === "light" ? "light" : "flash");
+  });
 
-  dom.modelSelect.addEventListener("change", () => {
-    persistSettingsFromUi();
+  dom.quickActionsBtn?.addEventListener("click", () => {
+    if (!dom.quickActionsMenu) return;
+    dom.quickActionsMenu.hidden = !dom.quickActionsMenu.hidden;
   });
-  dom.temperatureRange.addEventListener("change", () => {
-    persistSettingsFromUi();
+  dom.uploadFileBtn?.addEventListener("click", () => {
+    dom.quickActionsMenu.hidden = true;
+    dom.fileInput?.click();
   });
-  dom.maxTokensInput.addEventListener("change", () => {
-    persistSettingsFromUi();
+  dom.uploadImageBtn?.addEventListener("click", () => {
+    dom.quickActionsMenu.hidden = true;
+    dom.imageInput?.click();
+  });
+  dom.toggleWebSearchBtn?.addEventListener("click", () => {
+    state.enableWebSearch = !state.enableWebSearch;
+    updateWebSearchUi();
+    showToast(`Web search ${state.enableWebSearch ? "enabled" : "disabled"}.`);
+  });
+
+  dom.fileInput?.addEventListener("change", async () => {
+    await handlePickedFiles(dom.fileInput.files, "file");
+    dom.fileInput.value = "";
+  });
+  dom.imageInput?.addEventListener("change", async () => {
+    await handlePickedFiles(dom.imageInput.files, "image");
+    dom.imageInput.value = "";
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!dom.quickActionsMenu || !dom.quickActionsBtn) return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (dom.quickActionsMenu.hidden) return;
+    if (dom.quickActionsMenu.contains(target) || dom.quickActionsBtn.contains(target)) return;
+    dom.quickActionsMenu.hidden = true;
   });
 }
 
 async function bootstrap() {
-  applySettingsToUi();
+  state.settings.selectedEdition = storage.getSelectedEdition();
+  applyLockedRuntimeSettings();
+  applyEditionUi();
+  updateWebSearchUi();
+  renderPendingAttachments();
   updateCharCount();
   autosizePrompt();
   bindEvents();

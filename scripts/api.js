@@ -69,7 +69,15 @@ export const api = {
   }
 };
 
-export async function* streamChat({ messages, model, temperature, maxTokens, signal }) {
+export async function* streamChat({
+  messages,
+  model,
+  temperature,
+  maxTokens,
+  signal,
+  enableWebSearch = false,
+  attachments = []
+}) {
   const response = await fetch("/api/chat", {
     method: "POST",
     credentials: "include",
@@ -78,6 +86,8 @@ export async function* streamChat({ messages, model, temperature, maxTokens, sig
     body: JSON.stringify({
       model,
       messages,
+      enableWebSearch: Boolean(enableWebSearch),
+      attachments: Array.isArray(attachments) ? attachments : [],
       options: {
         temperature,
         num_predict: maxTokens
@@ -125,6 +135,9 @@ export async function* streamChat({ messages, model, temperature, maxTokens, sig
       }
 
       if (payload.error) throw new Error(payload.error);
+      if (payload.type === "sources" && Array.isArray(payload.sources)) {
+        yield { type: "sources", sources: payload.sources };
+      }
       if (payload?.message?.content) {
         yield { type: "token", content: payload.message.content };
       }
