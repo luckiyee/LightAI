@@ -112,6 +112,10 @@ echo [INFO] Starting Ollama service...
 start "Ollama Service" /min cmd /c "ollama serve"
 
 echo [INFO] Waiting for Ollama API...
+where curl >nul 2>&1
+if errorlevel 1 (
+  goto wait_ollama_powershell
+)
 set /a retries=0
 :wait_ollama
 curl -s "http://127.0.0.1:11434/api/tags" >nul 2>&1
@@ -123,6 +127,19 @@ if %retries% GEQ 23 (
 )
 timeout /t 2 /nobreak >nul
 goto wait_ollama
+
+:wait_ollama_powershell
+set /a retries=0
+:wait_ollama_ps_loop
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -Method Get | Out-Null; exit 0 } catch { exit 1 }"
+if not errorlevel 1 exit /b 0
+set /a retries+=1
+if %retries% GEQ 23 (
+  echo [ERROR] Ollama did not become ready in time.
+  exit /b 1
+)
+timeout /t 2 /nobreak >nul
+goto wait_ollama_ps_loop
 exit /b 0
 
 :ensure_light_model

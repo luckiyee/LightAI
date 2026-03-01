@@ -14,7 +14,7 @@ const defaultDb = {
 };
 
 let initialized = false;
-let writeQueue = Promise.resolve();
+let opQueue = Promise.resolve();
 
 async function ensureDbFile() {
   if (initialized) return;
@@ -40,11 +40,31 @@ export async function readDb() {
 
 export async function writeDb(data) {
   await ensureDbFile();
-  writeQueue = writeQueue.then(async () => {
-    const tmpPath = `${dbPath}.tmp`;
-    await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf8");
-    await fs.rename(tmpPath, dbPath);
+  const tmpPath = `${dbPath}.tmp`;
+  await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf8");
+  await fs.rename(tmpPath, dbPath);
+}
+
+export function withLockedDb(mutator) {
+  const op = opQueue.then(async () => {
+    const db = await readDb();
+    const result = await mutator(db);
+    await writeDb(db);
+    return result;
   });
-  return writeQueue;
+  opQueue = op.then(
+    () => undefined,
+    () => undefined
+  );
+  return op;
+}
+
+export function runSerialized(task) {
+  const op = opQueue.then(task);
+  opQueue = op.then(
+    () => undefined,
+    () => undefined
+  );
+  return op;
 }
 

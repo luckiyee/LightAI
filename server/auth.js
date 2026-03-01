@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { readDb, writeDb } from "./dataStore.js";
+import { readDb, withLockedDb } from "./dataStore.js";
 
 export const SESSION_COOKIE_NAME = "lightai_session";
 const SESSION_DAYS = 30;
@@ -19,7 +19,11 @@ function parseCookies(header) {
     if (!rawKey) return acc;
     const key = rawKey.trim();
     const value = rest.join("=").trim();
-    acc[key] = decodeURIComponent(value);
+    try {
+      acc[key] = decodeURIComponent(value);
+    } catch {
+      acc[key] = value;
+    }
     return acc;
   }, {});
 }
@@ -46,9 +50,21 @@ function sanitizeUsername(username) {
   return String(username || "").trim().toLowerCase();
 }
 
-export function setSessionCookie(res, token) {
+function isSecureRequest(req) {
+  if (process.env.NODE_ENV === "production") return true;
+  if (!req) return false;
+  if (req.secure) return true;
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  if (typeof forwardedProto === "string") {
+    return forwardedProto.split(",")[0].trim().toLowerCase() === "https";
+  }
+  return false;
+}
+
+export function setSessionCookie(req, res, token) {
   const maxAge = Math.floor(SESSION_MAX_AGE_MS / 1000);
-  const cookie = `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+  const secure = isSecureRequest(req) ? "; Secure" : "";
+  const cookie = `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
   res.setHeader("Set-Cookie", cookie);
 }
 
@@ -58,11 +74,7 @@ export function clearSessionCookie(res) {
 
 async function pruneExpiredSessions(db) {
   const now = Date.now();
-  const activeSessions = db.sessions.filter((session) => session.expiresAt > now);
-  if (activeSessions.length !== db.sessions.length) {
-    db.sessions = activeSessions;
-    await writeDb(db);
-  }
+  db.sessions = db.sessions.filter((session) => session.expiresAt > now);
 }
 
 export async function registerUser(username, password) {
@@ -77,41 +89,40 @@ export async function registerUser(username, password) {
     throw new HttpError(400, "Password must be 8-128 characters.");
   }
 
-  const db = await readDb();
-  const exists = db.users.some((user) => user.username === cleanUsername);
-  if (exists) {
-    throw new HttpError(409, "Username already exists.");
-  }
+  return withLockedDb(async (db) => {
+    const exists = db.users.some((user) => user.username === cleanUsername);
+    if (exists) {
+      throw new HttpError(409, "Username already exists.");
+    }
 
-  const userId = crypto.randomUUID();
-  db.users.push({
-    id: userId,
-    username: cleanUsername,
-    password: createPasswordHash(password),
-    createdAt: Date.now()
+    const userId = crypto.randomUUID();
+    db.users.push({
+      id: userId,
+      username: cleanUsername,
+      password: createPasswordHash(password),
+      createdAt: Date.now()
+    });
+    return { id: userId, username: cleanUsername };
   });
-  await writeDb(db);
-  return { id: userId, username: cleanUsername };
 }
 
 export async function createSessionForUser(userId) {
-  const db = await readDb();
-  await pruneExpiredSessions(db);
-  const token = crypto.randomBytes(32).toString("hex");
-  db.sessions.push({
-    token,
-    userId,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + SESSION_MAX_AGE_MS
+  return withLockedDb(async (db) => {
+    await pruneExpiredSessions(db);
+    const token = crypto.randomBytes(32).toString("hex");
+    db.sessions.push({
+      token,
+      userId,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + SESSION_MAX_AGE_MS
+    });
+    return token;
   });
-  await writeDb(db);
-  return token;
 }
 
 export async function loginUser(username, password) {
   const cleanUsername = sanitizeUsername(username);
   const db = await readDb();
-  await pruneExpiredSessions(db);
   const user = db.users.find((item) => item.username === cleanUsername);
   if (!user || !verifyPassword(password, user.password)) {
     throw new HttpError(401, "Invalid username or password.");
@@ -121,9 +132,9 @@ export async function loginUser(username, password) {
 
 export async function destroySessionByToken(token) {
   if (!token) return;
-  const db = await readDb();
-  db.sessions = db.sessions.filter((session) => session.token !== token);
-  await writeDb(db);
+  await withLockedDb(async (db) => {
+    db.sessions = db.sessions.filter((session) => session.token !== token);
+  });
 }
 
 export async function getUserFromRequest(req) {
@@ -132,9 +143,13 @@ export async function getUserFromRequest(req) {
   if (!token) return null;
 
   const db = await readDb();
-  await pruneExpiredSessions(db);
+  const now = Date.now();
   const session = db.sessions.find((item) => item.token === token);
   if (!session) return null;
+  if (session.expiresAt <= now) {
+    await destroySessionByToken(token);
+    return null;
+  }
   const user = db.users.find((item) => item.id === session.userId);
   if (!user) return null;
   return { id: user.id, username: user.username, token };

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { HttpError, requireAuth } from "../auth.js";
-import { readDb, writeDb } from "../dataStore.js";
+import { readDb, withLockedDb } from "../dataStore.js";
 
 const router = Router();
 
@@ -64,35 +64,36 @@ router.post("/", async (req, res, next) => {
   try {
     const { id, messages, title } = req.body || {};
     const safeMessages = sanitizeMessages(messages);
-    const db = await readDb();
-    const now = Date.now();
-    const safeTitle =
-      typeof title === "string" && title.trim().length > 0
-        ? title.trim().slice(0, 60)
-        : summarizeTitle(safeMessages);
+    const conversation = await withLockedDb(async (db) => {
+      const now = Date.now();
+      const safeTitle =
+        typeof title === "string" && title.trim().length > 0
+          ? title.trim().slice(0, 60)
+          : summarizeTitle(safeMessages);
 
-    let conversation = null;
-    if (typeof id === "string" && id.trim()) {
-      conversation = db.conversations.find((item) => item.id === id && item.userId === req.user.id);
-    }
+      let current = null;
+      if (typeof id === "string" && id.trim()) {
+        current = db.conversations.find((item) => item.id === id && item.userId === req.user.id);
+      }
 
-    if (!conversation) {
-      conversation = {
-        id: crypto.randomUUID(),
-        userId: req.user.id,
-        title: safeTitle,
-        messages: safeMessages,
-        createdAt: now,
-        updatedAt: now
-      };
-      db.conversations.push(conversation);
-    } else {
-      conversation.title = safeTitle;
-      conversation.messages = safeMessages;
-      conversation.updatedAt = now;
-    }
+      if (!current) {
+        current = {
+          id: crypto.randomUUID(),
+          userId: req.user.id,
+          title: safeTitle,
+          messages: safeMessages,
+          createdAt: now,
+          updatedAt: now
+        };
+        db.conversations.push(current);
+      } else {
+        current.title = safeTitle;
+        current.messages = safeMessages;
+        current.updatedAt = now;
+      }
+      return current;
+    });
 
-    await writeDb(db);
     res.status(201).json({
       conversation: {
         id: conversation.id,
@@ -109,15 +110,15 @@ router.post("/", async (req, res, next) => {
 
 router.delete("/:id", async (req, res, next) => {
   try {
-    const db = await readDb();
-    const before = db.conversations.length;
-    db.conversations = db.conversations.filter(
-      (item) => !(item.id === req.params.id && item.userId === req.user.id)
-    );
-    if (db.conversations.length === before) {
-      throw new HttpError(404, "Conversation not found.");
-    }
-    await writeDb(db);
+    await withLockedDb(async (db) => {
+      const before = db.conversations.length;
+      db.conversations = db.conversations.filter(
+        (item) => !(item.id === req.params.id && item.userId === req.user.id)
+      );
+      if (db.conversations.length === before) {
+        throw new HttpError(404, "Conversation not found.");
+      }
+    });
     res.json({ ok: true });
   } catch (error) {
     next(error);

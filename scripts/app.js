@@ -545,12 +545,6 @@ async function bootstrap() {
     state.settings.basePrompt = DEFAULT_BASE_PROMPT;
     persistSettings();
   }
-  for (let i = state.messages.length - 1; i >= 0; i -= 1) {
-    if (state.messages[i].role === "user") {
-      state.lastUserMessage = state.messages[i].content;
-      break;
-    }
-  }
   syncSettingsToUi();
   updateCharCount();
   bindEvents();

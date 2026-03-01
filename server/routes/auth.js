@@ -32,7 +32,7 @@ router.post("/register", async (req, res, next) => {
     const { username, password } = req.body || {};
     const user = await registerUser(username, password);
     const token = await createSessionForUser(user.id);
-    setSessionCookie(res, token);
+    setSessionCookie(req, res, token);
     return res.status(201).json({ user });
   } catch (error) {
     return next(error);
@@ -47,7 +47,7 @@ router.post("/login", async (req, res, next) => {
     }
     const user = await loginUser(username, password);
     const token = await createSessionForUser(user.id);
-    setSessionCookie(res, token);
+    setSessionCookie(req, res, token);
     return res.json({ user });
   } catch (error) {
     return next(error);
