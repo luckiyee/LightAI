@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LightAI - Settings</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles/main.css" />
+  </head>
+  <body class="settings-page">
+    <div id="toastRoot" class="toast-root"></div>
+
+    <header class="top-nav glass">
+      <a class="logo" href="./index.html">LightAI</a>
+      <nav class="top-links">
+        <a href="./index.html">Home</a>
+        <a href="./chat.html">Chat</a>
+        <a class="active" href="./settings.html">Settings</a>
+      </nav>
+      <span id="settingsStatus" class="status-pill">Loading...</span>
+    </header>
+
+    <main class="settings-shell">
+      <section class="settings-card">
+        <h2>Account Controls</h2>
+        <div id="authLoggedOut" class="auth-grid">
+          <label>
+            <span>Username</span>
+            <input id="usernameInput" type="text" minlength="3" maxlength="32" />
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="passwordInput" type="password" minlength="8" maxlength="128" />
+          </label>
+          <div class="settings-actions">
+            <button id="loginBtn" class="btn btn-primary">Login</button>
+            <button id="registerBtn" class="btn btn-outline">Register</button>
+          </div>
+        </div>
+
+        <div id="authLoggedIn" class="auth-user-panel" hidden>
+          <p>Logged in as <strong id="authUsername"></strong></p>
+          <button id="logoutBtn" class="btn btn-outline">Logout</button>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <h2>AI Preferences</h2>
+        <div class="prefs-grid">
+          <label>
+            <span>Select Model</span>
+            <select id="modelSelect"></select>
+          </label>
+          <label>
+            <span>Temperature <strong id="temperatureValue">0.7</strong></span>
+            <input id="temperatureRange" type="range" min="0" max="2" step="0.1" value="0.7" />
+          </label>
+          <label>
+            <span>Max Tokens</span>
+            <input id="maxTokensInput" type="number" min="64" max="8192" step="64" value="1024" />
+          </label>
+          <label>
+            <span>System Prompt Base</span>
+            <textarea id="basePromptInput" rows="6" maxlength="5000"></textarea>
+          </label>
+        </div>
+        <button id="saveSettingsBtn" class="btn btn-primary" disabled>Save Preferences</button>
+      </section>
+    </main>
+
+    <script type="module" src="./scripts/settings.js"></script>
+  </body>
+</html>

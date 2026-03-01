@@ -29,6 +29,14 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(rootDir, "index.html"));
 });
 
+app.get("/chat", (_req, res) => {
+  res.sendFile(path.join(rootDir, "chat.html"));
+});
+
+app.get("/settings", (_req, res) => {
+  res.sendFile(path.join(rootDir, "settings.html"));
+});
+
 app.use((err, _req, res, _next) => {
   const status = err instanceof HttpError ? err.status : err.status || 500;
   res.status(status).json({ error: err.message || "Unexpected server error." });

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LightAI - Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles/main.css" />
+  </head>
+  <body class="chat-page">
+    <div id="toastRoot" class="toast-root"></div>
+
+    <div class="chat-layout">
+      <aside class="chat-sidebar">
+        <div class="sidebar-top">
+          <a class="logo" href="./index.html">LightAI</a>
+          <button id="newChatBtn" class="btn btn-outline full">+ New Chat</button>
+        </div>
+
+        <div class="sidebar-conversations">
+          <h2>Conversations</h2>
+          <ul id="conversationList" class="conversation-list"></ul>
+        </div>
+
+        <div class="sidebar-auth">
+          <div id="authLoggedOut" class="auth-mini">
+            <input id="usernameInput" type="text" placeholder="Username" minlength="3" maxlength="32" />
+            <input id="passwordInput" type="password" placeholder="Password" minlength="8" maxlength="128" />
+            <div class="auth-actions">
+              <button id="loginBtn" class="btn btn-primary" type="button">Login</button>
+              <button id="registerBtn" class="btn btn-outline" type="button">Register</button>
+            </div>
+          </div>
+
+          <div id="authLoggedIn" class="auth-user" hidden>
+            <p>Signed in as <strong id="authUsername"></strong></p>
+            <button id="logoutBtn" class="btn btn-outline full" type="button">Logout</button>
+          </div>
+        </div>
+      </aside>
+
+      <section class="chat-main">
+        <header class="chat-header">
+          <div>
+            <h2 id="chatTitle">Light Chat</h2>
+            <p id="statusPill" class="status-inline">Checking connection...</p>
+          </div>
+          <div class="model-controls">
+            <label class="control">
+              <span>Model</span>
+              <select id="modelSelect"></select>
+            </label>
+            <label class="control small">
+              <span>Temp</span>
+              <input id="temperatureRange" type="number" min="0" max="2" step="0.1" value="0.7" />
+            </label>
+            <label class="control small">
+              <span>Max</span>
+              <input id="maxTokensInput" type="number" min="64" max="8192" step="64" value="1024" />
+            </label>
+          </div>
+        </header>
+
+        <div id="chatMessages" class="chat-feed" aria-live="polite"></div>
+
+        <footer class="chat-composer-wrap">
+          <form id="chatForm" class="chat-composer">
+            <textarea
+              id="promptInput"
+              rows="1"
+              maxlength="4000"
+              placeholder="Message LightAI..."
+              required
+            ></textarea>
+            <div class="composer-row">
+              <span id="charCount" class="hint">0 / 4000</span>
+              <div class="composer-buttons">
+                <button id="clearChatBtn" class="btn btn-ghost" type="button">Clear</button>
+                <button id="sendBtn" class="btn btn-primary icon-btn" type="submit" aria-label="Send">
+                  <span id="sendBtnLabel">Send</span>
+                </button>
+                <button id="cancelBtn" class="btn btn-danger icon-btn" type="button" hidden>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </form>
+        </footer>
+      </section>
+    </div>
+
+    <template id="messageTemplate">
+      <article class="msg">
+        <div class="msg-row">
+          <div class="msg-avatar" aria-hidden="true"></div>
+          <div class="msg-body">
+            <p class="msg-content"></p>
+            <div class="msg-actions">
+              <button class="mini-action copy-btn" type="button">Copy</button>
+              <button class="mini-action retry-btn" type="button">Retry</button>
+            </div>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script type="module" src="./scripts/app.js"></script>
+  </body>
+</html>

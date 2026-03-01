@@ -1,235 +1,240 @@
-import {
-  deleteConversation,
-  getConversation,
-  getCurrentUser,
-  getHealth,
-  getModels,
-  listConversations,
-  loginUser,
-  logoutUser,
-  registerUser,
-  saveConversation,
-  streamAssistantReply
-} from "./api.js";
-import { loadSettings, saveSettings } from "./storage.js";
+import { api, streamChat } from "./api.js";
+import { storage, DEFAULTS } from "./storage.js";
 
-const ASSISTANT_NAME = "Light";
-const ASSISTANT_VERSION = "0.1";
 const ADMIN_PASSWORD = "Kli-T10-Pmo";
-const DEFAULT_BASE_PROMPT =
-  `You are ${ASSISTANT_NAME} version ${ASSISTANT_VERSION}, a helpful, concise, and accurate AI assistant. ` +
-  "Respond clearly, prioritize practical answers, and ask brief clarifying questions only when needed.";
+const GUEST_MAX_MESSAGES = 5;
 
 const dom = {
+  toastRoot: document.getElementById("toastRoot"),
+  chatTitle: document.getElementById("chatTitle"),
   statusPill: document.getElementById("statusPill"),
+  conversationList: document.getElementById("conversationList"),
   authLoggedOut: document.getElementById("authLoggedOut"),
   authLoggedIn: document.getElementById("authLoggedIn"),
+  authUsername: document.getElementById("authUsername"),
   usernameInput: document.getElementById("usernameInput"),
   passwordInput: document.getElementById("passwordInput"),
   loginBtn: document.getElementById("loginBtn"),
   registerBtn: document.getElementById("registerBtn"),
-  authUsername: document.getElementById("authUsername"),
   logoutBtn: document.getElementById("logoutBtn"),
-  conversationList: document.getElementById("conversationList"),
+  newChatBtn: document.getElementById("newChatBtn"),
+  clearChatBtn: document.getElementById("clearChatBtn"),
   modelSelect: document.getElementById("modelSelect"),
   temperatureRange: document.getElementById("temperatureRange"),
-  temperatureValue: document.getElementById("temperatureValue"),
   maxTokensInput: document.getElementById("maxTokensInput"),
   chatMessages: document.getElementById("chatMessages"),
   chatForm: document.getElementById("chatForm"),
   promptInput: document.getElementById("promptInput"),
   charCount: document.getElementById("charCount"),
   sendBtn: document.getElementById("sendBtn"),
-  retryBtn: document.getElementById("retryBtn"),
+  sendBtnLabel: document.getElementById("sendBtnLabel"),
   cancelBtn: document.getElementById("cancelBtn"),
-  newChatBtn: document.getElementById("newChatBtn"),
-  clearChatBtn: document.getElementById("clearChatBtn"),
   messageTemplate: document.getElementById("messageTemplate")
 };
 
 const state = {
   user: null,
-  models: [],
   conversations: [],
   activeConversationId: null,
   messages: [],
-  settings: loadSettings(),
-  controller: null,
-  streaming: false,
+  models: [],
+  settings: storage.getAllPreferences(),
   lastUserMessage: "",
-  awaitingBasePrompt: false
+  streaming: false,
+  awaitingPromptOverride: false,
+  abortController: null,
+  stickToBottom: true
 };
 
-function updateStatus(text, kind = "neutral") {
+function showToast(message, kind = "success", timeoutMs = 2600) {
+  const toast = document.createElement("div");
+  toast.className = `toast ${kind}`;
+  toast.textContent = message;
+  dom.toastRoot.appendChild(toast);
+  window.setTimeout(() => toast.remove(), timeoutMs);
+}
+
+function setStatus(text, kind = "neutral") {
   dom.statusPill.textContent = text;
-  if (kind === "ok") {
-    dom.statusPill.style.background = "#e8f8e9";
-    dom.statusPill.style.color = "#1f6c31";
-  } else if (kind === "error") {
-    dom.statusPill.style.background = "#feecec";
-    dom.statusPill.style.color = "#9f2222";
-  } else {
-    dom.statusPill.style.background = "";
-    dom.statusPill.style.color = "";
+  dom.statusPill.style.color = kind === "error" ? "#b91c1c" : kind === "ok" ? "#166534" : "";
+}
+
+function updateComposerState() {
+  const hasModel = Boolean(dom.modelSelect.value || state.settings.selectedModel);
+  dom.promptInput.disabled = !hasModel || state.streaming;
+  dom.sendBtn.hidden = state.streaming;
+  dom.cancelBtn.hidden = !state.streaming;
+  dom.sendBtn.disabled = !hasModel || state.streaming;
+  dom.newChatBtn.disabled = state.streaming;
+  dom.clearChatBtn.disabled = state.streaming;
+}
+
+function updateAuthState() {
+  const loggedIn = Boolean(state.user);
+  dom.authLoggedOut.hidden = loggedIn;
+  dom.authLoggedOut.style.display = loggedIn ? "none" : "";
+  dom.authLoggedIn.hidden = !loggedIn;
+  dom.authLoggedIn.style.display = loggedIn ? "" : "none";
+  dom.authUsername.textContent = loggedIn ? state.user.username : "";
+  updateComposerState();
+}
+
+function updateCharCount() {
+  dom.charCount.textContent = `${dom.promptInput.value.length} / 4000`;
+}
+
+function autosizePrompt() {
+  dom.promptInput.style.height = "auto";
+  dom.promptInput.style.height = `${Math.min(dom.promptInput.scrollHeight, 180)}px`;
+}
+
+function maybeScrollToBottom(force = false) {
+  if (force || state.stickToBottom) {
+    dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
   }
 }
 
-function setStreamingState(streaming) {
-  state.streaming = streaming;
-  dom.sendBtn.disabled = streaming || !state.user;
-  dom.retryBtn.disabled = streaming;
-  dom.cancelBtn.disabled = !streaming;
-  dom.promptInput.disabled = streaming || !state.user;
-  dom.sendBtn.textContent = streaming ? "Sending..." : "Send";
+function onFeedScroll() {
+  const threshold = 36;
+  const bottomGap =
+    dom.chatMessages.scrollHeight - dom.chatMessages.scrollTop - dom.chatMessages.clientHeight;
+  state.stickToBottom = bottomGap < threshold;
+}
+
+function makeMessageNode(role, content, options = {}) {
+  const fragment = dom.messageTemplate.content.cloneNode(true);
+  const article = fragment.querySelector(".msg");
+  const avatar = fragment.querySelector(".msg-avatar");
+  const body = fragment.querySelector(".msg-body");
+  const contentEl = fragment.querySelector(".msg-content");
+  const copyBtn = fragment.querySelector(".copy-btn");
+  const retryBtn = fragment.querySelector(".retry-btn");
+
+  article.classList.add(role);
+  if (options.typing) contentEl.classList.add("typing-cursor");
+
+  if (role === "system") {
+    avatar.remove();
+    body.style.maxWidth = "100%";
+    copyBtn.remove();
+    retryBtn.remove();
+  }
+
+  if (role === "user") {
+    copyBtn.remove();
+    retryBtn.remove();
+  }
+
+  if (role === "ai") {
+    copyBtn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(contentEl.textContent || "");
+      showToast("Copied to clipboard.");
+    });
+    retryBtn.addEventListener("click", () => {
+      if (!state.lastUserMessage) return;
+      dom.promptInput.value = state.lastUserMessage;
+      updateCharCount();
+      autosizePrompt();
+      dom.promptInput.focus();
+    });
+  }
+
+  contentEl.textContent = content;
+  return { article, contentEl };
 }
 
 function renderMessages() {
   dom.chatMessages.innerHTML = "";
   if (state.messages.length === 0) {
-    if (!state.user) {
-      appendSystemMessage("Log in or create an account to start chatting.");
-    } else {
-      appendSystemMessage("Start chatting with LightAI. Pick a model and send a prompt.");
-    }
+    const { article } = makeMessageNode(
+      "system",
+      state.user
+        ? "Start a new conversation with Light."
+        : `Guest mode enabled. You can send up to ${GUEST_MAX_MESSAGES} messages before login.`
+    );
+    dom.chatMessages.appendChild(article);
+    maybeScrollToBottom(true);
     return;
   }
 
   for (const message of state.messages) {
-    const element = createMessageElement(message.role, message.content);
-    dom.chatMessages.appendChild(element);
+    const role = message.role === "assistant" ? "ai" : message.role;
+    const { article } = makeMessageNode(role, message.content);
+    dom.chatMessages.appendChild(article);
   }
-  dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+  maybeScrollToBottom(true);
 }
 
-function createMessageElement(role, content) {
-  const fragment = dom.messageTemplate.content.cloneNode(true);
-  const article = fragment.querySelector(".message");
-  const roleLabel = fragment.querySelector(".role-label");
-  const contentEl = fragment.querySelector(".message-content");
-  const copyBtn = fragment.querySelector(".copy-btn");
-
-  article.classList.add(role);
-  roleLabel.textContent =
-    role === "user"
-      ? "You"
-      : role === "assistant"
-        ? `${ASSISTANT_NAME} v${ASSISTANT_VERSION}`
-        : "System";
-  contentEl.textContent = content;
-
-  if (role === "assistant") {
-    copyBtn.hidden = false;
-    copyBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(contentEl.textContent || "");
-        copyBtn.textContent = "Copied";
-        setTimeout(() => {
-          copyBtn.textContent = "Copy";
-        }, 1200);
-      } catch {
-        copyBtn.textContent = "Failed";
-      }
-    });
-  }
-
-  return article;
-}
-
-function appendSystemMessage(content) {
-  const element = createMessageElement("system", content);
-  dom.chatMessages.appendChild(element);
-  dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
-}
-
-function renderConversationList() {
+function renderConversations() {
   dom.conversationList.innerHTML = "";
-  if (!state.user) {
-    const empty = document.createElement("p");
-    empty.className = "hint";
-    empty.textContent = "Login required.";
-    dom.conversationList.appendChild(empty);
-    return;
-  }
+  if (!state.user) return;
   if (state.conversations.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "hint";
-    empty.textContent = "No saved conversations yet.";
-    dom.conversationList.appendChild(empty);
+    const item = document.createElement("li");
+    item.className = "convo-item";
+    item.textContent = "No conversations yet.";
+    dom.conversationList.appendChild(item);
     return;
   }
 
   for (const convo of state.conversations) {
-    const row = document.createElement("div");
-    row.className = "conversation-item";
-    if (convo.id === state.activeConversationId) row.classList.add("active");
+    const item = document.createElement("li");
+    item.className = "convo-item";
+    if (convo.id === state.activeConversationId) item.classList.add("active");
 
-    const selectBtn = document.createElement("button");
-    selectBtn.type = "button";
-    selectBtn.className = "conversation-open";
-    selectBtn.textContent = convo.title || "Untitled";
-    selectBtn.addEventListener("click", () => void loadConversationById(convo.id));
+    const open = document.createElement("div");
+    open.className = "convo-open";
+    open.textContent = convo.title || "Untitled";
+    open.title = convo.title || "Untitled";
+    open.addEventListener("click", () => void loadConversation(convo.id));
 
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "conversation-delete";
-    deleteBtn.textContent = "Delete";
-    deleteBtn.addEventListener("click", () => void deleteConversationById(convo.id));
+    const actions = document.createElement("div");
+    actions.className = "convo-actions";
 
-    row.appendChild(selectBtn);
-    row.appendChild(deleteBtn);
-    dom.conversationList.appendChild(row);
+    const loadBtn = document.createElement("button");
+    loadBtn.type = "button";
+    loadBtn.textContent = "↗";
+    loadBtn.title = "Load";
+    loadBtn.addEventListener("click", () => void loadConversation(convo.id));
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.textContent = "🗑";
+    delBtn.title = "Delete";
+    delBtn.addEventListener("click", () => void removeConversation(convo.id));
+
+    actions.append(loadBtn, delBtn);
+    item.append(open, actions);
+    dom.conversationList.appendChild(item);
   }
 }
 
-function applyAuthUiState() {
-  const authed = Boolean(state.user);
-  dom.authLoggedOut.hidden = authed;
-  dom.authLoggedIn.hidden = !authed;
-  dom.authUsername.textContent = state.user?.username || "";
-  dom.modelSelect.disabled = !authed || dom.modelSelect.options.length === 0;
-  dom.temperatureRange.disabled = !authed;
-  dom.maxTokensInput.disabled = !authed;
-  dom.newChatBtn.disabled = !authed;
-  dom.clearChatBtn.disabled = !authed;
-  dom.promptInput.disabled = !authed || state.streaming;
-  dom.sendBtn.disabled = !authed || state.streaming;
-  dom.retryBtn.disabled = !authed || state.streaming;
-  renderConversationList();
-}
-
-function upsertAssistantMessage(content) {
-  const last = state.messages.at(-1);
-  if (last?.role === "assistant") {
-    last.content = content;
-  } else {
-    state.messages.push({ role: "assistant", content });
-  }
-  renderMessages();
-}
-
-function syncSettingsToUi() {
-  if (!state.settings.basePrompt) {
-    state.settings.basePrompt = DEFAULT_BASE_PROMPT;
-  }
+function applySettingsToUi() {
   dom.temperatureRange.value = String(state.settings.temperature);
-  dom.temperatureValue.textContent = String(state.settings.temperature);
   dom.maxTokensInput.value = String(state.settings.maxTokens);
 }
 
-function persistSettings() {
-  saveSettings(state.settings);
+function persistSettingsFromUi() {
+  state.settings.temperature = Number(dom.temperatureRange.value) || DEFAULTS.temperature;
+  state.settings.maxTokens = Number(dom.maxTokensInput.value) || DEFAULTS.maxTokens;
+  state.settings.selectedModel = dom.modelSelect.value || state.settings.selectedModel;
+  storage.setAllPreferences(state.settings);
 }
 
-function updateCharCount() {
-  const count = dom.promptInput.value.length;
-  dom.charCount.textContent = `${count} / 4000`;
-}
-
-async function refreshModels() {
+async function loadModels() {
   try {
-    const models = await getModels();
+    const result = await api.getModels();
+    const models = Array.isArray(result.models) ? result.models : [];
     state.models = models;
     dom.modelSelect.innerHTML = "";
+
+    if (!models.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No models found";
+      dom.modelSelect.appendChild(option);
+      dom.modelSelect.disabled = true;
+      return;
+    }
 
     for (const model of models) {
       const option = document.createElement("option");
@@ -238,327 +243,345 @@ async function refreshModels() {
       dom.modelSelect.appendChild(option);
     }
 
-    if (models.length === 0) {
-      const option = document.createElement("option");
-      option.value = "";
-      option.textContent = "No models found";
-      dom.modelSelect.appendChild(option);
-      dom.modelSelect.disabled = true;
-      updateStatus("Proxy online, but no local models found", "error");
-      return;
-    }
-
-    dom.modelSelect.disabled = false;
-    const preferred = state.settings.model && models.includes(state.settings.model)
-      ? state.settings.model
-      : models.includes(ASSISTANT_NAME)
-        ? ASSISTANT_NAME
+    const preferred = models.includes(state.settings.selectedModel)
+      ? state.settings.selectedModel
+      : models.includes("Light")
+        ? "Light"
         : models[0];
-    state.settings.model = preferred;
+    state.settings.selectedModel = preferred;
     dom.modelSelect.value = preferred;
-    persistSettings();
-    const hasSelected = models.includes(preferred);
-    if (!hasSelected) {
-      updateStatus("Selected model unavailable. Pick another model.", "error");
-    }
-    applyAuthUiState();
+    persistSettingsFromUi();
   } catch (error) {
-    appendSystemMessage(`Could not load models: ${error.message}`);
+    showToast(`Model load failed: ${error.message}`, "error");
   }
 }
 
 async function checkHealth() {
   try {
-    const health = await getHealth();
-    const ok = Boolean(health.proxy) && Boolean(health.ollamaReachable);
-    if (ok) {
-      updateStatus(`Online • ${health.ollamaBaseUrl}`, "ok");
+    const health = await api.getHealth();
+    if (health.ollamaReachable) {
+      setStatus("Online", "ok");
     } else {
-      updateStatus("Proxy online, Ollama unreachable", "error");
+      setStatus("Ollama unreachable", "error");
     }
   } catch (error) {
-    updateStatus(`Offline: ${error.message}`, "error");
+    setStatus(`Offline: ${error.message}`, "error");
   }
-}
-
-async function sendMessage(event) {
-  event.preventDefault();
-  if (state.streaming) return;
-  if (!state.user) {
-    appendSystemMessage("Login required before sending messages.");
-    return;
-  }
-
-  const content = dom.promptInput.value.trim();
-  if (!content) return;
-
-  if (content === ADMIN_PASSWORD) {
-    state.awaitingBasePrompt = true;
-    dom.promptInput.value = "";
-    updateCharCount();
-    appendSystemMessage("Password accepted. Send your new base prompt in the next message.");
-    return;
-  }
-
-  if (state.awaitingBasePrompt) {
-    state.settings.basePrompt = content;
-    state.awaitingBasePrompt = false;
-    persistSettings();
-    dom.promptInput.value = "";
-    updateCharCount();
-    appendSystemMessage(`${ASSISTANT_NAME} base prompt updated.`);
-    return;
-  }
-
-  if (content.length > 4000) {
-    appendSystemMessage("Prompt is too long. Keep it within 4000 characters.");
-    return;
-  }
-  if (!state.settings.model) {
-    appendSystemMessage("Select a valid model before sending.");
-    return;
-  }
-
-  state.messages.push({ role: "user", content });
-  state.lastUserMessage = content;
-  dom.promptInput.value = "";
-  updateCharCount();
-  renderMessages();
-
-  let assistantContent = "";
-  state.controller = new AbortController();
-  setStreamingState(true);
-
-  try {
-    const payloadMessages = [
-      { role: "system", content: state.settings.basePrompt || DEFAULT_BASE_PROMPT },
-      ...state.messages.filter((m) => m.role === "user" || m.role === "assistant")
-    ];
-    const stream = streamAssistantReply({
-      messages: payloadMessages,
-      model: state.settings.model,
-      temperature: state.settings.temperature,
-      maxTokens: state.settings.maxTokens,
-      signal: state.controller.signal
-    });
-
-    for await (const chunk of stream) {
-      if (chunk.type === "token") {
-        assistantContent += chunk.content;
-        upsertAssistantMessage(assistantContent);
-      }
-    }
-  } catch (error) {
-    if (error.name === "AbortError") {
-      appendSystemMessage("Generation cancelled.");
-    } else {
-      appendSystemMessage(`Error: ${error.message}`);
-    }
-  } finally {
-    setStreamingState(false);
-    state.controller = null;
-    await persistConversation();
-  }
-}
-
-function cancelStreaming() {
-  if (state.controller) {
-    state.controller.abort();
-  }
-}
-
-function retryLastMessage() {
-  if (state.streaming) return;
-  if (!state.lastUserMessage) {
-    appendSystemMessage("No previous user message found to retry.");
-    return;
-  }
-  dom.promptInput.value = state.lastUserMessage;
-  updateCharCount();
-  dom.chatForm.requestSubmit();
-}
-
-async function persistConversation() {
-  if (!state.user) return;
-  const safeMessages = state.messages.filter(
-    (msg) => msg.role === "user" || msg.role === "assistant"
-  );
-  if (safeMessages.length === 0) return;
-  const saved = await saveConversation({
-    id: state.activeConversationId,
-    title: safeMessages.find((msg) => msg.role === "user")?.content || "New conversation",
-    messages: safeMessages
-  });
-  state.activeConversationId = saved.id;
-  await refreshConversations();
 }
 
 async function refreshConversations() {
   if (!state.user) {
     state.conversations = [];
-    renderConversationList();
+    renderConversations();
     return;
   }
-  state.conversations = await listConversations();
-  renderConversationList();
-}
-
-async function loadConversationById(id) {
   try {
-    const conversation = await getConversation(id);
-    state.activeConversationId = conversation.id;
-    state.messages = Array.isArray(conversation.messages) ? conversation.messages : [];
-    for (let i = state.messages.length - 1; i >= 0; i -= 1) {
-      if (state.messages[i].role === "user") {
-        state.lastUserMessage = state.messages[i].content;
-        break;
-      }
-    }
-    renderConversationList();
-    renderMessages();
+    const payload = await api.listConversations();
+    state.conversations = Array.isArray(payload.conversations) ? payload.conversations : [];
+    renderConversations();
   } catch (error) {
-    appendSystemMessage(`Failed to load conversation: ${error.message}`);
+    showToast(`Conversation list failed: ${error.message}`, "error");
   }
 }
 
-async function deleteConversationById(id) {
+async function loadConversation(id) {
   try {
-    await deleteConversation(id);
+    const payload = await api.getConversation(id);
+    const convo = payload.conversation || payload;
+    state.activeConversationId = convo.id;
+    state.messages = Array.isArray(convo.messages) ? convo.messages : [];
+    dom.chatTitle.textContent = convo.title || "Light Chat";
+    state.lastUserMessage = [...state.messages].reverse().find((m) => m.role === "user")?.content || "";
+    renderMessages();
+    renderConversations();
+  } catch (error) {
+    showToast(`Load failed: ${error.message}`, "error");
+  }
+}
+
+async function removeConversation(id) {
+  try {
+    await api.deleteConversation(id);
     if (state.activeConversationId === id) {
       state.activeConversationId = null;
       state.messages = [];
+      dom.chatTitle.textContent = "Light Chat";
       renderMessages();
     }
     await refreshConversations();
   } catch (error) {
-    appendSystemMessage(`Failed to delete conversation: ${error.message}`);
+    showToast(`Delete failed: ${error.message}`, "error");
   }
 }
 
-function clearAuthFields() {
+async function persistConversation() {
+  if (!state.user) return;
+  const messages = state.messages.filter((m) => m.role === "user" || m.role === "assistant");
+  if (!messages.length) return;
+
+  const title = messages.find((m) => m.role === "user")?.content?.slice(0, 60) || "New conversation";
+  const payload = await api.saveConversation({
+    id: state.activeConversationId,
+    title,
+    messages
+  });
+  const saved = payload.conversation || payload;
+  state.activeConversationId = saved.id;
+  dom.chatTitle.textContent = saved.title || "Light Chat";
+  await refreshConversations();
+}
+
+function clearAuthInputs() {
   dom.usernameInput.value = "";
   dom.passwordInput.value = "";
 }
 
 async function handleRegister() {
+  if (state.streaming) return;
   try {
-    const username = dom.usernameInput.value.trim();
-    const password = dom.passwordInput.value;
-    const user = await registerUser(username, password);
-    state.user = user;
-    clearAuthFields();
-    state.messages = [];
-    state.activeConversationId = null;
-    renderMessages();
+    const res = await api.register(dom.usernameInput.value.trim(), dom.passwordInput.value);
+    state.user = res.user || res;
+    dom.chatTitle.textContent = "Light Chat";
+    clearAuthInputs();
+    updateAuthState();
     await refreshConversations();
-    applyAuthUiState();
+    renderMessages();
+    showToast("Account created.");
   } catch (error) {
-    appendSystemMessage(`Register failed: ${error.message}`);
+    showToast(error.message, "error");
   }
 }
 
 async function handleLogin() {
+  if (state.streaming) return;
   try {
-    const username = dom.usernameInput.value.trim();
-    const password = dom.passwordInput.value;
-    const user = await loginUser(username, password);
-    state.user = user;
-    clearAuthFields();
-    state.messages = [];
-    state.activeConversationId = null;
-    renderMessages();
+    const res = await api.login(dom.usernameInput.value.trim(), dom.passwordInput.value);
+    state.user = res.user || res;
+    dom.chatTitle.textContent = "Light Chat";
+    clearAuthInputs();
+    updateAuthState();
     await refreshConversations();
-    applyAuthUiState();
+    renderMessages();
+    showToast("Logged in.");
   } catch (error) {
-    appendSystemMessage(`Login failed: ${error.message}`);
+    showToast(error.message, "error");
   }
 }
 
 async function handleLogout() {
+  if (state.streaming) return;
   try {
-    await logoutUser();
+    await api.logout();
     state.user = null;
-    state.messages = [];
     state.activeConversationId = null;
-    state.conversations = [];
+    state.messages = [];
+    dom.chatTitle.textContent = "Light Chat (Guest)";
+    updateAuthState();
     renderMessages();
-    applyAuthUiState();
+    renderConversations();
+    showToast("Logged out.");
   } catch (error) {
-    appendSystemMessage(`Logout failed: ${error.message}`);
+    showToast(error.message, "error");
   }
 }
 
-function handleKeyboardSubmit(event) {
-  if (event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault();
-    dom.chatForm.requestSubmit();
+function appendMessageToState(role, content) {
+  state.messages.push({ role, content });
+  renderMessages();
+}
+
+function appendSystemMessage(content) {
+  appendMessageToState("system", content);
+}
+
+function getGuestMessageCount() {
+  return state.messages.filter((m) => m.role === "user").length;
+}
+
+async function sendMessage(event) {
+  event.preventDefault();
+  if (state.streaming) return;
+
+  const content = dom.promptInput.value.trim();
+  if (!content) return;
+
+  if (!state.user && getGuestMessageCount() >= GUEST_MAX_MESSAGES) {
+    showToast(`Guest limit reached (${GUEST_MAX_MESSAGES}). Login to continue.`, "error", 4200);
+    appendSystemMessage(
+      `You reached the guest limit (${GUEST_MAX_MESSAGES} messages). Login or register to keep chatting and save conversations.`
+    );
+    return;
   }
+
+  if (content === ADMIN_PASSWORD) {
+    state.awaitingPromptOverride = true;
+    dom.promptInput.value = "";
+    updateCharCount();
+    autosizePrompt();
+    showToast("Prompt override unlocked.");
+    return;
+  }
+
+  if (state.awaitingPromptOverride) {
+    storage.setBasePrompt(content);
+    state.settings.basePrompt = content;
+    state.awaitingPromptOverride = false;
+    dom.promptInput.value = "";
+    updateCharCount();
+    autosizePrompt();
+    showToast("Base prompt updated.");
+    return;
+  }
+
+  state.lastUserMessage = content;
+  appendMessageToState("user", content);
+
+  dom.promptInput.value = "";
+  updateCharCount();
+  autosizePrompt();
+
+  const { article, contentEl } = makeMessageNode("ai", "", { typing: true });
+  dom.chatMessages.appendChild(article);
+  maybeScrollToBottom();
+
+  state.abortController = new AbortController();
+  state.streaming = true;
+  updateComposerState();
+
+  let assistantText = "";
+  let activeModel = state.settings.selectedModel;
+  try {
+    const payloadMessages = [
+      { role: "system", content: state.settings.basePrompt || storage.getBasePrompt() },
+      ...state.messages
+        .filter((msg) => msg.role === "user" || msg.role === "assistant")
+        .map((msg) => ({ role: msg.role, content: msg.content }))
+    ];
+
+    const runStream = async (model, tokenLimit) => {
+      for await (const chunk of streamChat({
+        model,
+        messages: payloadMessages,
+        temperature: Number(state.settings.temperature),
+        maxTokens: tokenLimit,
+        signal: state.abortController.signal
+      })) {
+        if (chunk.type === "token") {
+          assistantText += chunk.content;
+          contentEl.textContent = assistantText;
+          maybeScrollToBottom();
+        }
+      }
+    };
+
+    try {
+      await runStream(activeModel, Number(state.settings.maxTokens));
+    } catch (primaryError) {
+      const message = String(primaryError?.message || "");
+      const looksLikeRuntimeCrash = /exit status 2|runner process|signal|out of memory/i.test(message);
+      const fallbackModel = state.models.includes("llama3.1:8b")
+        ? "llama3.1:8b"
+        : state.models.find(Boolean);
+
+      if (!looksLikeRuntimeCrash || !fallbackModel || fallbackModel === activeModel) {
+        throw primaryError;
+      }
+
+      showToast(`Model failed (${activeModel}). Retrying with ${fallbackModel}...`, "error", 4000);
+      assistantText = "";
+      contentEl.textContent = "";
+      activeModel = fallbackModel;
+      await runStream(fallbackModel, Math.min(Number(state.settings.maxTokens) || 256, 256));
+      state.settings.selectedModel = fallbackModel;
+      dom.modelSelect.value = fallbackModel;
+      persistSettingsFromUi();
+      appendSystemMessage(`Switched model to ${fallbackModel} after runtime failure.`);
+    }
+  } catch (error) {
+    if (error.name === "AbortError") {
+      showToast("Generation cancelled.");
+    } else {
+      showToast(error.message, "error");
+      appendSystemMessage(`AI error: ${error.message}`);
+    }
+  } finally {
+    contentEl.classList.remove("typing-cursor");
+    state.streaming = false;
+    state.abortController = null;
+    updateComposerState();
+  }
+
+  article.remove();
+  if (assistantText) {
+    appendMessageToState("assistant", assistantText);
+    await persistConversation();
+  }
+}
+
+function cancelStreaming() {
+  if (state.abortController) state.abortController.abort();
 }
 
 function bindEvents() {
-  dom.chatForm.addEventListener("submit", sendMessage);
-  dom.loginBtn.addEventListener("click", () => void handleLogin());
-  dom.registerBtn.addEventListener("click", () => void handleRegister());
-  dom.logoutBtn.addEventListener("click", () => void handleLogout());
-  dom.retryBtn.addEventListener("click", retryLastMessage);
+  dom.chatMessages.addEventListener("scroll", onFeedScroll);
+  dom.promptInput.addEventListener("input", () => {
+    updateCharCount();
+    autosizePrompt();
+  });
+  dom.promptInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      dom.chatForm.requestSubmit();
+    }
+  });
+
+  dom.chatForm.addEventListener("submit", (event) => void sendMessage(event));
   dom.cancelBtn.addEventListener("click", cancelStreaming);
-  dom.promptInput.addEventListener("keydown", handleKeyboardSubmit);
-  dom.promptInput.addEventListener("input", updateCharCount);
-
-  dom.temperatureRange.addEventListener("input", () => {
-    state.settings.temperature = Number(dom.temperatureRange.value);
-    dom.temperatureValue.textContent = String(state.settings.temperature);
-    persistSettings();
-  });
-
-  dom.maxTokensInput.addEventListener("change", () => {
-    const value = Number(dom.maxTokensInput.value);
-    state.settings.maxTokens = Number.isFinite(value) ? Math.max(64, Math.min(8192, value)) : 1024;
-    dom.maxTokensInput.value = String(state.settings.maxTokens);
-    persistSettings();
-  });
-
-  dom.modelSelect.addEventListener("change", () => {
-    state.settings.model = dom.modelSelect.value;
-    persistSettings();
-  });
-
   dom.newChatBtn.addEventListener("click", () => {
     state.activeConversationId = null;
     state.messages = [];
+    dom.chatTitle.textContent = "Light Chat";
     renderMessages();
-    renderConversationList();
+    renderConversations();
+  });
+  dom.clearChatBtn.addEventListener("click", () => {
+    state.messages = [];
+    renderMessages();
   });
 
-  dom.clearChatBtn.addEventListener("click", () => {
-    state.activeConversationId = null;
-    state.messages = [];
-    dom.chatMessages.innerHTML = "";
-    appendSystemMessage("Chat cleared.");
-    renderConversationList();
+  dom.loginBtn.addEventListener("click", () => void handleLogin());
+  dom.registerBtn.addEventListener("click", () => void handleRegister());
+  dom.logoutBtn.addEventListener("click", () => void handleLogout());
+
+  dom.modelSelect.addEventListener("change", () => {
+    persistSettingsFromUi();
+  });
+  dom.temperatureRange.addEventListener("change", () => {
+    persistSettingsFromUi();
+  });
+  dom.maxTokensInput.addEventListener("change", () => {
+    persistSettingsFromUi();
   });
 }
 
 async function bootstrap() {
-  state.messages = [];
-  if (!state.settings.basePrompt) {
-    state.settings.basePrompt = DEFAULT_BASE_PROMPT;
-    persistSettings();
-  }
-  syncSettingsToUi();
+  applySettingsToUi();
   updateCharCount();
+  autosizePrompt();
   bindEvents();
   renderMessages();
-  applyAuthUiState();
+  updateAuthState();
   await checkHealth();
-  await refreshModels();
+  await loadModels();
+
   try {
-    state.user = await getCurrentUser();
+    state.user = await api.me();
   } catch {
     state.user = null;
   }
+  dom.chatTitle.textContent = state.user ? "Light Chat" : "Light Chat (Guest)";
+  updateAuthState();
   await refreshConversations();
-  applyAuthUiState();
 }
 
 bootstrap();

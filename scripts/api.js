@@ -1,109 +1,78 @@
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
-async function rawJson(response) {
+async function parseResponse(response) {
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
     const text = await response.text();
-    throw new Error(text || "Unexpected server response.");
+    if (!response.ok) throw new Error(text || "Request failed.");
+    return text;
   }
-  return response.json();
-}
 
-async function parseJsonResponse(response) {
-  const data = await rawJson(response);
+  const payload = await response.json();
   if (!response.ok) {
-    throw new Error(data.error || "Request failed.");
+    throw new Error(payload.error || payload.message || "Request failed.");
   }
-  return data;
+  return payload;
 }
 
-export async function getHealth() {
-  const response = await fetch("/api/health", { credentials: "same-origin" });
-  return parseJsonResponse(response);
-}
-
-export async function getModels() {
-  const response = await fetch("/api/models", { credentials: "same-origin" });
-  const data = await parseJsonResponse(response);
-  return Array.isArray(data.models) ? data.models : [];
-}
-
-export async function registerUser(username, password) {
-  const response = await fetch("/api/auth/register", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ username, password })
+async function request(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: "include",
+    headers: options.body ? JSON_HEADERS : undefined,
+    ...options
   });
-  const data = await parseJsonResponse(response);
-  return data.user;
+  return parseResponse(response);
 }
 
-export async function loginUser(username, password) {
-  const response = await fetch("/api/auth/login", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ username, password })
-  });
-  const data = await parseJsonResponse(response);
-  return data.user;
-}
-
-export async function logoutUser() {
-  const response = await fetch("/api/auth/logout", {
-    method: "POST",
-    credentials: "same-origin"
-  });
-  await parseJsonResponse(response);
-}
-
-export async function getCurrentUser() {
-  const response = await fetch("/api/auth/me", { credentials: "same-origin" });
-  if (response.status === 401) {
-    return null;
+export const api = {
+  getHealth() {
+    return request("/api/health");
+  },
+  getModels() {
+    return request("/api/models");
+  },
+  register(username, password) {
+    return request("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ username, password })
+    });
+  },
+  login(username, password) {
+    return request("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password })
+    });
+  },
+  logout() {
+    return request("/api/auth/logout", { method: "POST" });
+  },
+  async me() {
+    const response = await fetch("/api/auth/me", { credentials: "include" });
+    if (response.status === 401) return null;
+    const payload = await parseResponse(response);
+    return payload.user || null;
+  },
+  listConversations() {
+    return request("/api/conversations");
+  },
+  getConversation(id) {
+    return request(`/api/conversations/${encodeURIComponent(id)}`);
+  },
+  saveConversation(data) {
+    return request("/api/conversations", {
+      method: "POST",
+      body: JSON.stringify(data)
+    });
+  },
+  deleteConversation(id) {
+    return request(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
-  const data = await parseJsonResponse(response);
-  return data.user || null;
-}
+};
 
-export async function listConversations() {
-  const response = await fetch("/api/conversations", { credentials: "same-origin" });
-  const data = await parseJsonResponse(response);
-  return Array.isArray(data.conversations) ? data.conversations : [];
-}
-
-export async function getConversation(id) {
-  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
-    credentials: "same-origin"
-  });
-  const data = await parseJsonResponse(response);
-  return data.conversation;
-}
-
-export async function saveConversation({ id, title, messages }) {
-  const response = await fetch("/api/conversations", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ id, title, messages })
-  });
-  const data = await parseJsonResponse(response);
-  return data.conversation;
-}
-
-export async function deleteConversation(id) {
-  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    credentials: "same-origin"
-  });
-  await parseJsonResponse(response);
-}
-
-export async function* streamAssistantReply({ messages, model, temperature, maxTokens, signal }) {
+export async function* streamChat({ messages, model, temperature, maxTokens, signal }) {
   const response = await fetch("/api/chat", {
     method: "POST",
-    credentials: "same-origin",
+    credentials: "include",
     headers: JSON_HEADERS,
     signal,
     body: JSON.stringify({
@@ -119,8 +88,8 @@ export async function* streamAssistantReply({ messages, model, temperature, maxT
   if (!response.ok) {
     let errorMessage = "Chat request failed.";
     try {
-      const data = await response.json();
-      errorMessage = data.error || errorMessage;
+      const body = await response.json();
+      errorMessage = body.error || errorMessage;
     } catch {
       const text = await response.text();
       errorMessage = text || errorMessage;
@@ -129,7 +98,7 @@ export async function* streamAssistantReply({ messages, model, temperature, maxT
   }
 
   if (!response.body) {
-    throw new Error("Streaming not supported in this browser.");
+    throw new Error("ReadableStream is not supported in this browser.");
   }
 
   const reader = response.body.getReader();
@@ -147,30 +116,33 @@ export async function* streamAssistantReply({ messages, model, temperature, maxT
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
+
+      let payload;
       try {
-        const payload = JSON.parse(trimmed);
-        if (payload.error) {
-          throw new Error(payload.error);
-        }
-        const delta = payload?.message?.content ?? "";
-        const isDone = Boolean(payload?.done);
-        if (delta) {
-          yield { type: "token", content: delta };
-        }
-        if (isDone) {
-          yield { type: "done" };
-          return;
-        }
-      } catch (err) {
-        throw new Error(err.message || "Failed to parse stream response.");
+        payload = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+
+      if (payload.error) throw new Error(payload.error);
+      if (payload?.message?.content) {
+        yield { type: "token", content: payload.message.content };
+      }
+      if (payload.done) {
+        yield { type: "done" };
+        return;
       }
     }
   }
 
-  if (buffer.trim().length > 0) {
-    const payload = JSON.parse(buffer.trim());
-    if (payload?.message?.content) {
-      yield { type: "token", content: payload.message.content };
+  if (buffer.trim()) {
+    try {
+      const payload = JSON.parse(buffer.trim());
+      if (payload?.message?.content) {
+        yield { type: "token", content: payload.message.content };
+      }
+    } catch {
+      // ignore trailing malformed chunk
     }
   }
 

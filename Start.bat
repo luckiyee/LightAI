@@ -38,10 +38,9 @@ if not exist ".env" (
   copy /Y ".env.example" ".env" >nul
 )
 
-echo [INFO] Starting LightAI server...
-start "LightAI Server" cmd /c "cd /d ""%~dp0"" && npm start"
+call :start_lightai_server
+if errorlevel 1 exit /b 1
 
-timeout /t 3 /nobreak >nul
 echo [INFO] Opening browser...
 start "" "http://localhost:3000"
 
@@ -121,7 +120,7 @@ set /a retries=0
 curl -s "http://127.0.0.1:11434/api/tags" >nul 2>&1
 if not errorlevel 1 exit /b 0
 set /a retries+=1
-if %retries% GEQ 23 (
+if !retries! GEQ 23 (
   echo [ERROR] Ollama did not become ready in time.
   exit /b 1
 )
@@ -134,13 +133,37 @@ set /a retries=0
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -Method Get | Out-Null; exit 0 } catch { exit 1 }"
 if not errorlevel 1 exit /b 0
 set /a retries+=1
-if %retries% GEQ 23 (
+if !retries! GEQ 23 (
   echo [ERROR] Ollama did not become ready in time.
   exit /b 1
 )
 timeout /t 2 /nobreak >nul
 goto wait_ollama_ps_loop
 exit /b 0
+
+:start_lightai_server
+echo [INFO] Checking LightAI server status...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:3000/api/health' -Method Get -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }"
+if not errorlevel 1 (
+  echo [INFO] LightAI server is already running.
+  exit /b 0
+)
+
+echo [INFO] Starting LightAI server...
+start "LightAI Server" /min cmd /k "cd /d ""%~dp0"" && node server/index.js"
+
+set /a retries=0
+:wait_lightai_server
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:3000/api/health' -Method Get -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }"
+if not errorlevel 1 exit /b 0
+set /a retries+=1
+if !retries! GEQ 20 (
+  echo [ERROR] LightAI server did not become ready in time.
+  echo [ERROR] Check the 'LightAI Server' terminal window for details.
+  exit /b 1
+)
+timeout /t 1 /nobreak >nul
+goto wait_lightai_server
 
 :ensure_light_model
 echo [INFO] Ensuring base model exists (llama3.1:8b)...
@@ -151,14 +174,20 @@ if errorlevel 1 (
 )
 
 ollama show Light >nul 2>&1
-if errorlevel 1 (
-  echo [INFO] Creating Light model (v0.1) from Modelfile.light...
-  ollama create Light -f "Modelfile.light"
-  if errorlevel 1 (
-    echo [ERROR] Failed to create Light model.
-    exit /b 1
-  )
-) else (
+if not errorlevel 1 (
   echo [INFO] Light model already exists.
+  exit /b 0
+)
+
+if not exist "Modelfile.light" (
+  echo [ERROR] Modelfile.light was not found in project root.
+  exit /b 1
+)
+
+echo [INFO] Creating Light model (v0.1) from Modelfile.light...
+ollama create Light -f ".\Modelfile.light"
+if errorlevel 1 (
+  echo [ERROR] Failed to create Light model.
+  exit /b 1
 )
 exit /b 0
