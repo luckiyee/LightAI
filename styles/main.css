@@ -1,0 +1,263 @@
+:root {
+  --bg: #f6f6f7;
+  --surface: #ffffff;
+  --surface-2: #ececef;
+  --text: #1f2937;
+  --text-muted: #6b7280;
+  --accent: #ffd84d;
+  --accent-strong: #f4bf00;
+  --user-bubble: #fff5c4;
+  --assistant-bubble: #ffffff;
+  --error: #c81e1e;
+  --radius: 14px;
+  --shadow: 0 8px 24px rgba(29, 35, 49, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
+  background: linear-gradient(180deg, #fffbea 0%, var(--bg) 50%);
+  color: var(--text);
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 16px;
+}
+
+.topbar {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.brand-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 6px rgba(255, 216, 77, 0.2);
+}
+
+.status-pill {
+  font-size: 0.85rem;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  flex: 1;
+}
+
+.settings-card,
+.chat-panel {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.settings-card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-card h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+label {
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+select,
+input[type="number"],
+textarea {
+  border: 1px solid #d3d6dc;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  color: inherit;
+  background: #fff;
+}
+
+select:focus,
+input:focus,
+textarea:focus,
+button:focus {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.control-buttons {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 65vh;
+}
+
+.messages {
+  padding: 16px;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message {
+  border-radius: 12px;
+  padding: 12px;
+  max-width: 88%;
+  border: 1px solid #eceef2;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: var(--user-bubble);
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background: var(--assistant-bubble);
+}
+
+.message.system {
+  align-self: center;
+  max-width: 100%;
+  background: #fff5f5;
+  border-color: #f7cdcd;
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.message-content {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.copy-btn {
+  border: 0;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.composer {
+  border-top: 1px solid #eceef2;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer textarea {
+  resize: vertical;
+  min-height: 72px;
+  max-height: 220px;
+}
+
+.composer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #262626;
+  transition: transform 0.12s ease, background 0.2s ease;
+}
+
+.btn-primary:hover:enabled {
+  background: #ffe278;
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: #eef0f3;
+  color: #313742;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-panel {
+    min-height: 60vh;
+  }
+
+  .message {
+    max-width: 100%;
+  }
+}
