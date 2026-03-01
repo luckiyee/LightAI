@@ -19,6 +19,23 @@
       <main class="layout">
         <aside class="settings-card">
           <h2>Settings</h2>
+          <div id="authPanel" class="auth-panel">
+            <div id="authLoggedOut" class="auth-block">
+              <label for="usernameInput">Username</label>
+              <input id="usernameInput" type="text" minlength="3" maxlength="32" />
+              <label for="passwordInput">Password</label>
+              <input id="passwordInput" type="password" minlength="8" maxlength="128" />
+              <div class="control-buttons">
+                <button id="loginBtn" class="btn btn-secondary" type="button">Login</button>
+                <button id="registerBtn" class="btn btn-secondary" type="button">Create Account</button>
+              </div>
+            </div>
+            <div id="authLoggedIn" class="auth-block" hidden>
+              <p class="hint">Logged in as <strong id="authUsername"></strong></p>
+              <button id="logoutBtn" class="btn btn-secondary" type="button">Logout</button>
+            </div>
+          </div>
+
           <label for="modelSelect">Model</label>
           <select id="modelSelect" aria-label="Select model"></select>
 
@@ -32,6 +49,9 @@
             <button id="newChatBtn" class="btn btn-secondary" type="button">New Chat</button>
             <button id="clearChatBtn" class="btn btn-secondary" type="button">Clear Chat</button>
           </div>
+
+          <h2>Conversations</h2>
+          <div id="conversationList" class="conversation-list"></div>
         </aside>
 
         <section class="chat-panel">

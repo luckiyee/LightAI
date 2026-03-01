@@ -1,8 +1,36 @@
-import { getHealth, getModels, streamAssistantReply } from "./api.js";
-import { loadHistory, loadSettings, saveHistory, saveSettings } from "./storage.js";
+import {
+  deleteConversation,
+  getConversation,
+  getCurrentUser,
+  getHealth,
+  getModels,
+  listConversations,
+  loginUser,
+  logoutUser,
+  registerUser,
+  saveConversation,
+  streamAssistantReply
+} from "./api.js";
+import { loadSettings, saveSettings } from "./storage.js";
+
+const ASSISTANT_NAME = "Light";
+const ASSISTANT_VERSION = "0.1";
+const ADMIN_PASSWORD = "Kli-T10-Pmo";
+const DEFAULT_BASE_PROMPT =
+  `You are ${ASSISTANT_NAME} version ${ASSISTANT_VERSION}, a helpful, concise, and accurate AI assistant. ` +
+  "Respond clearly, prioritize practical answers, and ask brief clarifying questions only when needed.";
 
 const dom = {
   statusPill: document.getElementById("statusPill"),
+  authLoggedOut: document.getElementById("authLoggedOut"),
+  authLoggedIn: document.getElementById("authLoggedIn"),
+  usernameInput: document.getElementById("usernameInput"),
+  passwordInput: document.getElementById("passwordInput"),
+  loginBtn: document.getElementById("loginBtn"),
+  registerBtn: document.getElementById("registerBtn"),
+  authUsername: document.getElementById("authUsername"),
+  logoutBtn: document.getElementById("logoutBtn"),
+  conversationList: document.getElementById("conversationList"),
   modelSelect: document.getElementById("modelSelect"),
   temperatureRange: document.getElementById("temperatureRange"),
   temperatureValue: document.getElementById("temperatureValue"),
@@ -20,12 +48,16 @@ const dom = {
 };
 
 const state = {
+  user: null,
   models: [],
+  conversations: [],
+  activeConversationId: null,
   messages: [],
   settings: loadSettings(),
   controller: null,
   streaming: false,
-  lastUserMessage: ""
+  lastUserMessage: "",
+  awaitingBasePrompt: false
 };
 
 function updateStatus(text, kind = "neutral") {
@@ -44,17 +76,21 @@ function updateStatus(text, kind = "neutral") {
 
 function setStreamingState(streaming) {
   state.streaming = streaming;
-  dom.sendBtn.disabled = streaming;
+  dom.sendBtn.disabled = streaming || !state.user;
   dom.retryBtn.disabled = streaming;
   dom.cancelBtn.disabled = !streaming;
-  dom.promptInput.disabled = streaming;
+  dom.promptInput.disabled = streaming || !state.user;
   dom.sendBtn.textContent = streaming ? "Sending..." : "Send";
 }
 
 function renderMessages() {
   dom.chatMessages.innerHTML = "";
   if (state.messages.length === 0) {
-    appendSystemMessage("Start chatting with LightAI. Pick a model and send a prompt.");
+    if (!state.user) {
+      appendSystemMessage("Log in or create an account to start chatting.");
+    } else {
+      appendSystemMessage("Start chatting with LightAI. Pick a model and send a prompt.");
+    }
     return;
   }
 
@@ -73,7 +109,12 @@ function createMessageElement(role, content) {
   const copyBtn = fragment.querySelector(".copy-btn");
 
   article.classList.add(role);
-  roleLabel.textContent = role === "user" ? "You" : role === "assistant" ? "LightAI" : "System";
+  roleLabel.textContent =
+    role === "user"
+      ? "You"
+      : role === "assistant"
+        ? `${ASSISTANT_NAME} v${ASSISTANT_VERSION}`
+        : "System";
   contentEl.textContent = content;
 
   if (role === "assistant") {
@@ -100,6 +141,62 @@ function appendSystemMessage(content) {
   dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
 }
 
+function renderConversationList() {
+  dom.conversationList.innerHTML = "";
+  if (!state.user) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "Login required.";
+    dom.conversationList.appendChild(empty);
+    return;
+  }
+  if (state.conversations.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No saved conversations yet.";
+    dom.conversationList.appendChild(empty);
+    return;
+  }
+
+  for (const convo of state.conversations) {
+    const row = document.createElement("div");
+    row.className = "conversation-item";
+    if (convo.id === state.activeConversationId) row.classList.add("active");
+
+    const selectBtn = document.createElement("button");
+    selectBtn.type = "button";
+    selectBtn.className = "conversation-open";
+    selectBtn.textContent = convo.title || "Untitled";
+    selectBtn.addEventListener("click", () => void loadConversationById(convo.id));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "conversation-delete";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", () => void deleteConversationById(convo.id));
+
+    row.appendChild(selectBtn);
+    row.appendChild(deleteBtn);
+    dom.conversationList.appendChild(row);
+  }
+}
+
+function applyAuthUiState() {
+  const authed = Boolean(state.user);
+  dom.authLoggedOut.hidden = authed;
+  dom.authLoggedIn.hidden = !authed;
+  dom.authUsername.textContent = state.user?.username || "";
+  dom.modelSelect.disabled = !authed || dom.modelSelect.options.length === 0;
+  dom.temperatureRange.disabled = !authed;
+  dom.maxTokensInput.disabled = !authed;
+  dom.newChatBtn.disabled = !authed;
+  dom.clearChatBtn.disabled = !authed;
+  dom.promptInput.disabled = !authed || state.streaming;
+  dom.sendBtn.disabled = !authed || state.streaming;
+  dom.retryBtn.disabled = !authed || state.streaming;
+  renderConversationList();
+}
+
 function upsertAssistantMessage(content) {
   const last = state.messages.at(-1);
   if (last?.role === "assistant") {
@@ -107,11 +204,13 @@ function upsertAssistantMessage(content) {
   } else {
     state.messages.push({ role: "assistant", content });
   }
-  saveHistory(state.messages);
   renderMessages();
 }
 
 function syncSettingsToUi() {
+  if (!state.settings.basePrompt) {
+    state.settings.basePrompt = DEFAULT_BASE_PROMPT;
+  }
   dom.temperatureRange.value = String(state.settings.temperature);
   dom.temperatureValue.textContent = String(state.settings.temperature);
   dom.maxTokensInput.value = String(state.settings.maxTokens);
@@ -152,7 +251,9 @@ async function refreshModels() {
     dom.modelSelect.disabled = false;
     const preferred = state.settings.model && models.includes(state.settings.model)
       ? state.settings.model
-      : models[0];
+      : models.includes(ASSISTANT_NAME)
+        ? ASSISTANT_NAME
+        : models[0];
     state.settings.model = preferred;
     dom.modelSelect.value = preferred;
     persistSettings();
@@ -160,6 +261,7 @@ async function refreshModels() {
     if (!hasSelected) {
       updateStatus("Selected model unavailable. Pick another model.", "error");
     }
+    applyAuthUiState();
   } catch (error) {
     appendSystemMessage(`Could not load models: ${error.message}`);
   }
@@ -182,9 +284,32 @@ async function checkHealth() {
 async function sendMessage(event) {
   event.preventDefault();
   if (state.streaming) return;
+  if (!state.user) {
+    appendSystemMessage("Login required before sending messages.");
+    return;
+  }
 
   const content = dom.promptInput.value.trim();
   if (!content) return;
+
+  if (content === ADMIN_PASSWORD) {
+    state.awaitingBasePrompt = true;
+    dom.promptInput.value = "";
+    updateCharCount();
+    appendSystemMessage("Password accepted. Send your new base prompt in the next message.");
+    return;
+  }
+
+  if (state.awaitingBasePrompt) {
+    state.settings.basePrompt = content;
+    state.awaitingBasePrompt = false;
+    persistSettings();
+    dom.promptInput.value = "";
+    updateCharCount();
+    appendSystemMessage(`${ASSISTANT_NAME} base prompt updated.`);
+    return;
+  }
+
   if (content.length > 4000) {
     appendSystemMessage("Prompt is too long. Keep it within 4000 characters.");
     return;
@@ -199,15 +324,18 @@ async function sendMessage(event) {
   dom.promptInput.value = "";
   updateCharCount();
   renderMessages();
-  saveHistory(state.messages);
 
   let assistantContent = "";
   state.controller = new AbortController();
   setStreamingState(true);
 
   try {
+    const payloadMessages = [
+      { role: "system", content: state.settings.basePrompt || DEFAULT_BASE_PROMPT },
+      ...state.messages.filter((m) => m.role === "user" || m.role === "assistant")
+    ];
     const stream = streamAssistantReply({
-      messages: state.messages.filter((m) => m.role !== "system"),
+      messages: payloadMessages,
       model: state.settings.model,
       temperature: state.settings.temperature,
       maxTokens: state.settings.maxTokens,
@@ -229,7 +357,7 @@ async function sendMessage(event) {
   } finally {
     setStreamingState(false);
     state.controller = null;
-    saveHistory(state.messages);
+    await persistConversation();
   }
 }
 
@@ -250,6 +378,116 @@ function retryLastMessage() {
   dom.chatForm.requestSubmit();
 }
 
+async function persistConversation() {
+  if (!state.user) return;
+  const safeMessages = state.messages.filter(
+    (msg) => msg.role === "user" || msg.role === "assistant"
+  );
+  if (safeMessages.length === 0) return;
+  const saved = await saveConversation({
+    id: state.activeConversationId,
+    title: safeMessages.find((msg) => msg.role === "user")?.content || "New conversation",
+    messages: safeMessages
+  });
+  state.activeConversationId = saved.id;
+  await refreshConversations();
+}
+
+async function refreshConversations() {
+  if (!state.user) {
+    state.conversations = [];
+    renderConversationList();
+    return;
+  }
+  state.conversations = await listConversations();
+  renderConversationList();
+}
+
+async function loadConversationById(id) {
+  try {
+    const conversation = await getConversation(id);
+    state.activeConversationId = conversation.id;
+    state.messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+    for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+      if (state.messages[i].role === "user") {
+        state.lastUserMessage = state.messages[i].content;
+        break;
+      }
+    }
+    renderConversationList();
+    renderMessages();
+  } catch (error) {
+    appendSystemMessage(`Failed to load conversation: ${error.message}`);
+  }
+}
+
+async function deleteConversationById(id) {
+  try {
+    await deleteConversation(id);
+    if (state.activeConversationId === id) {
+      state.activeConversationId = null;
+      state.messages = [];
+      renderMessages();
+    }
+    await refreshConversations();
+  } catch (error) {
+    appendSystemMessage(`Failed to delete conversation: ${error.message}`);
+  }
+}
+
+function clearAuthFields() {
+  dom.usernameInput.value = "";
+  dom.passwordInput.value = "";
+}
+
+async function handleRegister() {
+  try {
+    const username = dom.usernameInput.value.trim();
+    const password = dom.passwordInput.value;
+    const user = await registerUser(username, password);
+    state.user = user;
+    clearAuthFields();
+    state.messages = [];
+    state.activeConversationId = null;
+    renderMessages();
+    await refreshConversations();
+    applyAuthUiState();
+  } catch (error) {
+    appendSystemMessage(`Register failed: ${error.message}`);
+  }
+}
+
+async function handleLogin() {
+  try {
+    const username = dom.usernameInput.value.trim();
+    const password = dom.passwordInput.value;
+    const user = await loginUser(username, password);
+    state.user = user;
+    clearAuthFields();
+    state.messages = [];
+    state.activeConversationId = null;
+    renderMessages();
+    await refreshConversations();
+    applyAuthUiState();
+  } catch (error) {
+    appendSystemMessage(`Login failed: ${error.message}`);
+  }
+}
+
+async function handleLogout() {
+  try {
+    await logoutUser();
+    state.user = null;
+    state.messages = [];
+    state.activeConversationId = null;
+    state.conversations = [];
+    renderMessages();
+    applyAuthUiState();
+  } catch (error) {
+    appendSystemMessage(`Logout failed: ${error.message}`);
+  }
+}
+
 function handleKeyboardSubmit(event) {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
@@ -259,6 +497,9 @@ function handleKeyboardSubmit(event) {
 
 function bindEvents() {
   dom.chatForm.addEventListener("submit", sendMessage);
+  dom.loginBtn.addEventListener("click", () => void handleLogin());
+  dom.registerBtn.addEventListener("click", () => void handleRegister());
+  dom.logoutBtn.addEventListener("click", () => void handleLogout());
   dom.retryBtn.addEventListener("click", retryLastMessage);
   dom.cancelBtn.addEventListener("click", cancelStreaming);
   dom.promptInput.addEventListener("keydown", handleKeyboardSubmit);
@@ -283,21 +524,27 @@ function bindEvents() {
   });
 
   dom.newChatBtn.addEventListener("click", () => {
+    state.activeConversationId = null;
     state.messages = [];
-    saveHistory(state.messages);
     renderMessages();
+    renderConversationList();
   });
 
   dom.clearChatBtn.addEventListener("click", () => {
+    state.activeConversationId = null;
     state.messages = [];
-    saveHistory(state.messages);
     dom.chatMessages.innerHTML = "";
     appendSystemMessage("Chat cleared.");
+    renderConversationList();
   });
 }
 
 async function bootstrap() {
-  state.messages = loadHistory();
+  state.messages = [];
+  if (!state.settings.basePrompt) {
+    state.settings.basePrompt = DEFAULT_BASE_PROMPT;
+    persistSettings();
+  }
   for (let i = state.messages.length - 1; i >= 0; i -= 1) {
     if (state.messages[i].role === "user") {
       state.lastUserMessage = state.messages[i].content;
@@ -308,8 +555,16 @@ async function bootstrap() {
   updateCharCount();
   bindEvents();
   renderMessages();
+  applyAuthUiState();
   await checkHealth();
   await refreshModels();
+  try {
+    state.user = await getCurrentUser();
+  } catch {
+    state.user = null;
+  }
+  await refreshConversations();
+  applyAuthUiState();
 }
 
 bootstrap();

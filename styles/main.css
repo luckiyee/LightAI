@@ -96,6 +96,19 @@ body {
   font-size: 1rem;
 }
 
+.auth-panel {
+  border: 1px solid #eceef2;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 4px;
+}
+
+.auth-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 label {
   font-size: 0.86rem;
   color: var(--text-muted);
@@ -124,6 +137,48 @@ button:focus {
   display: grid;
   gap: 8px;
   margin-top: 6px;
+}
+
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.conversation-item {
+  border: 1px solid #eceef2;
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 6px;
+}
+
+.conversation-item.active {
+  border-color: #f4bf00;
+  background: #fff9df;
+}
+
+.conversation-open,
+.conversation-delete {
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.conversation-open {
+  text-align: left;
+  background: #f2f3f5;
+  color: #1f2937;
+}
+
+.conversation-delete {
+  background: #fee2e2;
+  color: #9f2222;
 }
 
 .chat-panel {

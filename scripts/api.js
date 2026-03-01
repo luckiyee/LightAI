@@ -1,12 +1,16 @@
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
-async function parseJsonResponse(response) {
+async function rawJson(response) {
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
     const text = await response.text();
     throw new Error(text || "Unexpected server response.");
   }
-  const data = await response.json();
+  return response.json();
+}
+
+async function parseJsonResponse(response) {
+  const data = await rawJson(response);
   if (!response.ok) {
     throw new Error(data.error || "Request failed.");
   }
@@ -14,19 +18,92 @@ async function parseJsonResponse(response) {
 }
 
 export async function getHealth() {
-  const response = await fetch("/api/health");
+  const response = await fetch("/api/health", { credentials: "same-origin" });
   return parseJsonResponse(response);
 }
 
 export async function getModels() {
-  const response = await fetch("/api/models");
+  const response = await fetch("/api/models", { credentials: "same-origin" });
   const data = await parseJsonResponse(response);
   return Array.isArray(data.models) ? data.models : [];
+}
+
+export async function registerUser(username, password) {
+  const response = await fetch("/api/auth/register", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ username, password })
+  });
+  const data = await parseJsonResponse(response);
+  return data.user;
+}
+
+export async function loginUser(username, password) {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ username, password })
+  });
+  const data = await parseJsonResponse(response);
+  return data.user;
+}
+
+export async function logoutUser() {
+  const response = await fetch("/api/auth/logout", {
+    method: "POST",
+    credentials: "same-origin"
+  });
+  await parseJsonResponse(response);
+}
+
+export async function getCurrentUser() {
+  const response = await fetch("/api/auth/me", { credentials: "same-origin" });
+  if (response.status === 401) {
+    return null;
+  }
+  const data = await parseJsonResponse(response);
+  return data.user || null;
+}
+
+export async function listConversations() {
+  const response = await fetch("/api/conversations", { credentials: "same-origin" });
+  const data = await parseJsonResponse(response);
+  return Array.isArray(data.conversations) ? data.conversations : [];
+}
+
+export async function getConversation(id) {
+  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+    credentials: "same-origin"
+  });
+  const data = await parseJsonResponse(response);
+  return data.conversation;
+}
+
+export async function saveConversation({ id, title, messages }) {
+  const response = await fetch("/api/conversations", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ id, title, messages })
+  });
+  const data = await parseJsonResponse(response);
+  return data.conversation;
+}
+
+export async function deleteConversation(id) {
+  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "same-origin"
+  });
+  await parseJsonResponse(response);
 }
 
 export async function* streamAssistantReply({ messages, model, temperature, maxTokens, signal }) {
   const response = await fetch("/api/chat", {
     method: "POST",
+    credentials: "same-origin",
     headers: JSON_HEADERS,
     signal,
     body: JSON.stringify({

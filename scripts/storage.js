@@ -5,16 +5,17 @@ export function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) {
-      return { model: "", temperature: 0.7, maxTokens: 1024 };
+      return { model: "Light", temperature: 0.7, maxTokens: 1024, basePrompt: "" };
     }
     const parsed = JSON.parse(raw);
     return {
-      model: typeof parsed.model === "string" ? parsed.model : "",
+      model: typeof parsed.model === "string" ? parsed.model : "Light",
       temperature: Number.isFinite(parsed.temperature) ? parsed.temperature : 0.7,
-      maxTokens: Number.isFinite(parsed.maxTokens) ? parsed.maxTokens : 1024
+      maxTokens: Number.isFinite(parsed.maxTokens) ? parsed.maxTokens : 1024,
+      basePrompt: typeof parsed.basePrompt === "string" ? parsed.basePrompt : ""
     };
   } catch {
-    return { model: "", temperature: 0.7, maxTokens: 1024 };
+    return { model: "Light", temperature: 0.7, maxTokens: 1024, basePrompt: "" };
   }
 }
 

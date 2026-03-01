@@ -1,5 +1,6 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
+import { requireAuth } from "../auth.js";
 import { createChatStream, listModels } from "../ollamaClient.js";
 
 const router = Router();
@@ -54,7 +55,7 @@ router.get("/models", async (_req, res) => {
   }
 });
 
-router.post("/chat", chatLimiter, async (req, res) => {
+router.post("/chat", requireAuth, chatLimiter, async (req, res) => {
   let clearTimeout = null;
 
   try {
