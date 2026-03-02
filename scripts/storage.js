@@ -8,7 +8,7 @@ const KEYS = {
 
 const DEFAULTS = {
   selectedEdition: "flash",
-  selectedModel: "Light",
+  selectedModel: "qwen2.5:3b",
   temperature: 0.7,
   maxTokens: 1024,
   basePrompt:

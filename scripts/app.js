@@ -8,7 +8,7 @@ const EDITIONS = {
   flash: {
     id: "flash",
     label: "Flash",
-    model: "Light-Flash",
+    model: "qwen2.5:3b",
     temperature: 0.5,
     maxTokens: 512,
     hint: "Fast mode"
@@ -16,7 +16,7 @@ const EDITIONS = {
   light: {
     id: "light",
     label: "Light",
-    model: "Light",
+    model: "llama3.1:8b",
     temperature: 0.7,
     maxTokens: 1024,
     hint: "Deep mode"

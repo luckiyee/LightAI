@@ -10,8 +10,8 @@ echo -- ^| ^|___  ^| ^| ^| ^|_^| ^|  _  ^| ^| ^| / ___ \ ^| ^|
 echo -- ^|_____^|^|___^| \____^|_^| ^|_^| ^|_^|/_/   \_\___^|
 echo.
 echo LightAI boots your local AI chat environment:
-echo installs dependencies and starts the app.
-echo Runtime uses Ollama via npm client (set OLLAMA_BASE_URL in .env).
+echo installs dependencies, verifies models, and starts the app.
+echo Runtime uses Ollama with required local models.
 echo.
 set /p "startPrompt=Press Enter to start setup..."
 echo.
@@ -26,6 +26,15 @@ if not exist ".env" (
   echo [INFO] Creating .env from .env.example...
   copy /Y ".env.example" ".env" >nul
 )
+
+call :ensure_ollama
+if errorlevel 1 exit /b 1
+
+call :start_ollama
+if errorlevel 1 exit /b 1
+
+call :ensure_required_models
+if errorlevel 1 exit /b 1
 
 call :start_lightai_server
 if errorlevel 1 exit /b 1
@@ -75,6 +84,83 @@ if errorlevel 1 (
   echo [ERROR] npm install failed.
   exit /b 1
 )
+exit /b 0
+
+:ensure_ollama
+where ollama >nul 2>&1
+if errorlevel 1 (
+  where winget >nul 2>&1
+  if errorlevel 1 (
+    echo [ERROR] Ollama is not installed and winget is unavailable.
+    echo [ERROR] Install Ollama manually, then rerun Start.bat.
+    exit /b 1
+  )
+  echo [INFO] Ollama not found. Installing Ollama...
+  winget install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements
+  if errorlevel 1 (
+    echo [ERROR] Failed to install Ollama automatically.
+    exit /b 1
+  )
+  if exist "%LocalAppData%\Programs\Ollama" set "PATH=%PATH%;%LocalAppData%\Programs\Ollama"
+  if exist "%ProgramFiles%\Ollama" set "PATH=%PATH%;%ProgramFiles%\Ollama"
+)
+where ollama >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] Ollama still not available in PATH. Open a new terminal and run Start.bat again.
+  exit /b 1
+)
+exit /b 0
+
+:start_ollama
+echo [INFO] Checking Ollama service status...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -Method Get -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }"
+if not errorlevel 1 (
+  echo [INFO] Ollama service already running.
+  exit /b 0
+)
+
+echo [INFO] Starting Ollama service...
+start "Ollama Service" /min cmd /c "ollama serve"
+
+set /a retries=0
+:wait_ollama_service
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -Method Get -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }"
+if not errorlevel 1 exit /b 0
+set /a retries+=1
+if !retries! GEQ 40 (
+  echo [ERROR] Ollama service did not become ready in time.
+  exit /b 1
+)
+timeout /t 1 /nobreak >nul
+goto wait_ollama_service
+
+:ensure_required_models
+echo [INFO] Verifying required models...
+
+ollama show qwen2.5:3b >nul 2>&1
+if errorlevel 1 (
+  echo [INFO] Model qwen2.5:3b missing. Downloading...
+  ollama pull qwen2.5:3b
+  if errorlevel 1 (
+    echo [ERROR] Failed to download qwen2.5:3b.
+    exit /b 1
+  )
+) else (
+  echo [INFO] Model qwen2.5:3b is already present.
+)
+
+ollama show llama3.1:8b >nul 2>&1
+if errorlevel 1 (
+  echo [INFO] Model llama3.1:8b missing. Downloading...
+  ollama pull llama3.1:8b
+  if errorlevel 1 (
+    echo [ERROR] Failed to download llama3.1:8b.
+    exit /b 1
+  )
+) else (
+  echo [INFO] Model llama3.1:8b is already present.
+)
+
 exit /b 0
 
 :start_lightai_server
